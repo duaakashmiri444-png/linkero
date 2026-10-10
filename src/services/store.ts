@@ -76,6 +76,8 @@ class AppStore {
   private notifications: NotificationItem[] = [];
   private providers: PaymentProvider[] = [];
   private support: SupportChannelsPublic | null = null;
+  /** Staff picks this in Control Panel -> Platform Settings; it caps every catalogue section. */
+  private sectionSize = 10;
   private pendingTopups: TopupRow[] = [];
   private uploads: MediaAsset[] = [];
   private adminStats: Record<string, number | string> = {};
@@ -134,6 +136,10 @@ class AppStore {
 
   public getSupport(): SupportChannelsPublic | null {
     return this.support;
+  }
+
+  public getSectionSize(): number {
+    return this.sectionSize;
   }
 
   public getPendingTopups(): TopupRow[] {
@@ -212,7 +218,9 @@ class AppStore {
   }
 
   public async refreshCatalogue(): Promise<void> {
-    const result = await this.run('refreshCatalogue', () => api.catalogue.list({ limit: 60 }));
+    // No limit: the endpoint returns the whole published catalogue when one is not asked for, so the
+    // "N of M" counters on each shelf are the real totals rather than the first page.
+    const result = await this.run('refreshCatalogue', () => api.catalogue.list());
     if (!result) return;
     const published = result.products.filter(p => p.status === 'PUBLISHED');
     this.videos = published.filter(isVideoProduct).map(toVideo);
@@ -261,6 +269,9 @@ class AppStore {
     const result = await this.run('loadSupport', () => api.settings.public());
     if (!result) return;
     this.support = result.support;
+    // A backend without the setting yet still has to paginate, just at the shipped default.
+    const size = Math.round(Number(result.catalogue?.section_size));
+    this.sectionSize = Number.isFinite(size) && size >= 4 ? Math.min(60, size) : 10;
     this.notify();
   }
 

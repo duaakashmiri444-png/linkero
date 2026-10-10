@@ -9,8 +9,6 @@ interface VideoCardProps {
   isUnlocked?: boolean;
   watchProgress?: { progressSeconds: number; durationSeconds: number };
   isFavorite?: boolean;
-  /** Rails scroll sideways and need a fixed card width; grids must stretch the card to the cell. */
-  rail?: boolean;
 }
 
 export const VideoCard: React.FC<VideoCardProps> = ({
@@ -18,8 +16,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   onOpen,
   isUnlocked,
   watchProgress,
-  isFavorite,
-  rail
+  isFavorite
 }) => {
   const percentWatched = watchProgress && watchProgress.durationSeconds > 0
     ? Math.min(100, Math.round((watchProgress.progressSeconds / watchProgress.durationSeconds) * 100))
@@ -33,7 +30,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   return (
     <div
       onClick={() => onOpen(video.id)}
-      className={`group relative bg-[#121422] rounded-2xl overflow-hidden border border-white/[0.08] hover:border-purple-500/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-purple-950/40 cursor-pointer flex flex-col select-none ${rail ? 'shrink-0 w-64 md:w-72' : 'w-full'}`}
+      className="group relative w-full bg-[#121422] rounded-2xl overflow-hidden border border-white/[0.08] hover:border-purple-500/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-purple-950/40 cursor-pointer flex flex-col select-none"
     >
       {/* Thumbnail Aspect Container */}
       <div className="relative aspect-video w-full overflow-hidden bg-[#0a0b12]">

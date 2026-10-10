@@ -786,12 +786,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
             {settingsRows.map(row => (
               <div key={row.key}>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">{row.label ?? row.key}</label>
-                <input
-                  type="text"
-                  value={settingsDraft[row.key] ?? ''}
-                  onChange={e => setSettingsDraft(prev => ({ ...prev, [row.key]: e.target.value }))}
-                  className="w-full bg-black/40 border border-white/15 rounded-xl p-2.5 text-xs text-white"
-                />
+                {row.key === 'catalogue_section_size' ? (
+                  <select
+                    value={settingsDraft[row.key] ?? '10'}
+                    onChange={e => setSettingsDraft(prev => ({ ...prev, [row.key]: e.target.value }))}
+                    className="w-full bg-black/40 border border-white/15 rounded-xl p-2.5 text-xs text-white"
+                  >
+                    {[8, 10, 12, 16, 20, 24, 30, 40].map(n => (
+                      <option key={n} value={String(n)}>{n} cards, then Load More</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={settingsDraft[row.key] ?? ''}
+                    onChange={e => setSettingsDraft(prev => ({ ...prev, [row.key]: e.target.value }))}
+                    className="w-full bg-black/40 border border-white/15 rounded-xl p-2.5 text-xs text-white"
+                  />
+                )}
                 {row.description && <p className="text-[10px] text-slate-500 mt-1">{row.description}</p>}
               </div>
             ))}

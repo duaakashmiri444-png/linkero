@@ -496,7 +496,7 @@ export const api = {
   },
 
   settings: {
-    public: () => request<{ success: boolean; support: SupportChannelsPublic }>('/api/settings/public'),
+    public: () => request<{ success: boolean; support: SupportChannelsPublic; catalogue?: { section_size: number } }>('/api/settings/public'),
   },
 
   admin: {

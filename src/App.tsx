@@ -16,7 +16,9 @@ import { SearchModal } from './components/SearchModal';
 import { ReportModal } from './components/ReportModal';
 import { Toast } from './components/Toast';
 import { Footer } from './components/Footer';
-import { VideoRail } from './components/VideoRail';
+import { CatalogueSection, GRID_PACKS } from './components/CatalogueSection';
+import { VideoCard } from './components/VideoCard';
+import { PackCard } from './components/PackCard';
 import { Sparkles, Play, Loader2 } from 'lucide-react';
 
 export default function App() {
@@ -62,6 +64,7 @@ export default function App() {
   };
 
   const featuredVideo = videos.find(v => v.isFeatured) || videos[0];
+  const sectionSize = store.getSectionSize();
 
   if (!booted) {
     return (
@@ -130,59 +133,68 @@ export default function App() {
               </div>
             </div>
 
-            {/* Home Streaming Rails */}
-            <div className="space-y-2">
-              {/* Continue watching rail if user has progress */}
+            {/* Home shelves: videos, the packs the marketplace sells, and what is free to watch. */}
+            <div className="max-w-7xl mx-auto px-4 md:px-8 space-y-8">
               {user.watchHistory.length > 0 && (
-                <VideoRail
+                <CatalogueSection
                   title="Continue Watching"
-                  videos={user.watchHistory.map(w => videos.find(v => v.id === w.videoId)).filter((v): v is Video => !!v)}
-                  user={user}
-                  onOpenVideo={(id) => setSelectedVideoId(id)}
+                  items={user.watchHistory.map(w => videos.find(v => v.id === w.videoId)).filter((v): v is Video => !!v)}
+                  pageSize={sectionSize}
+                  renderItem={video => <VideoCard video={video} onOpen={setSelectedVideoId} isUnlocked={video.isFree || user.unlockedVideoIds.includes(video.id)} watchProgress={user.watchHistory.find(w => w.videoId === video.id)} isFavorite={user.favorites.includes(video.id)} />}
                 />
               )}
 
-              {/* Trending Rail */}
-              <VideoRail
+              <CatalogueSection
                 title="Trending Right Now"
-                videos={videos.filter(v => v.isTrending)}
-                user={user}
-                onOpenVideo={(id) => setSelectedVideoId(id)}
-                onViewAll={() => setActiveTab('videos')}
+                items={videos.filter(v => v.isTrending)}
+                pageSize={sectionSize}
+                renderItem={video => <VideoCard video={video} onOpen={setSelectedVideoId} isUnlocked={video.isFree || user.unlockedVideoIds.includes(video.id)} watchProgress={user.watchHistory.find(w => w.videoId === video.id)} isFavorite={user.favorites.includes(video.id)} />}
               />
 
-              {/* Free Videos Rail */}
-              <VideoRail
+              <CatalogueSection
                 title="100% Free Videos"
-                videos={videos.filter(v => v.isFree)}
-                user={user}
-                onOpenVideo={(id) => setSelectedVideoId(id)}
-                onViewAll={() => setActiveTab('videos')}
+                items={videos.filter(v => v.isFree)}
+                pageSize={sectionSize}
+                renderItem={video => <VideoCard video={video} onOpen={setSelectedVideoId} isUnlocked watchProgress={user.watchHistory.find(w => w.videoId === video.id)} isFavorite={user.favorites.includes(video.id)} />}
               />
 
-              {/* One rail per category that actually has content */}
+              <CatalogueSection
+                title="Watch Before You Unlock"
+                badge="Free previews"
+                items={videos.filter(v => !v.isFree && v.previewUrl)}
+                pageSize={sectionSize}
+                renderItem={video => <VideoCard video={video} onOpen={setSelectedVideoId} isUnlocked={user.unlockedVideoIds.includes(video.id)} watchProgress={user.watchHistory.find(w => w.videoId === video.id)} isFavorite={user.favorites.includes(video.id)} />}
+              />
+
+              <CatalogueSection
+                title="Packs On The Marketplace"
+                badge="Files delivered"
+                items={packs}
+                pageSize={sectionSize}
+                gridClassName={GRID_PACKS}
+                renderItem={pack => <PackCard pack={pack} onOpen={setSelectedPackId} isUnlocked={user.unlockedPackIds.includes(pack.id)} />}
+              />
+
               {Array.from(new Set(videos.map(v => v.category)))
+                .sort()
                 .map(cat => videos.filter(v => v.category === cat))
-                .filter(group => group.length >= 2)
-                .slice(0, 4)
-                .map(group => (
-                  <VideoRail
+                .filter(group => group.length > 0)
+                .map((group, i) => (
+                  <CatalogueSection
                     key={group[0].category}
                     title={group[0].category}
-                    videos={group}
-                    user={user}
-                    onOpenVideo={(id) => setSelectedVideoId(id)}
-                    onViewAll={() => setActiveTab('videos')}
+                    items={group}
+                    pageSize={sectionSize}
+                    ordinal={i + 1}
+                    renderItem={video => <VideoCard video={video} onOpen={setSelectedVideoId} isUnlocked={video.isFree || user.unlockedVideoIds.includes(video.id)} watchProgress={user.watchHistory.find(w => w.videoId === video.id)} isFavorite={user.favorites.includes(video.id)} />}
                   />
                 ))}
 
-              {/* Highest rated streams */}
-              <VideoRail
+              <CatalogueSection
                 title="Highest Rated"
-                videos={[...videos].filter(v => v.ratingCount > 0).sort((a, b) => b.rating - a.rating).slice(0, 12)}
-                user={user}
-                onOpenVideo={(id) => setSelectedVideoId(id)}
-                onViewAll={() => setActiveTab('videos')}
+                items={[...videos].filter(v => v.ratingCount > 0).sort((a, b) => b.rating - a.rating)}
+                pageSize={sectionSize}
+                renderItem={video => <VideoCard video={video} onOpen={setSelectedVideoId} isUnlocked={video.isFree || user.unlockedVideoIds.includes(video.id)} watchProgress={user.watchHistory.find(w => w.videoId === video.id)} isFavorite={user.favorites.includes(video.id)} />}
               />
             </div>
           </div>
@@ -194,7 +206,6 @@ export default function App() {
             videos={videos}
             user={user}
             onOpenVideo={(id) => setSelectedVideoId(id)}
-            onOpenWallet={() => setIsWalletOpen(true)}
           />
         )}
 

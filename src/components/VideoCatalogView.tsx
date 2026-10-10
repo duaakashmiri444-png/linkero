@@ -1,222 +1,154 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Video, User } from '../types';
-import { VideoRail } from './VideoRail';
 import { VideoCard } from './VideoCard';
-import { LayoutGrid, Rows, Filter, Sparkles, CheckCircle2 } from 'lucide-react';
+import { CatalogueSection } from './CatalogueSection';
+import { store } from '../services/store';
 
 interface VideoCatalogViewProps {
   videos: Video[];
   user: User;
   onOpenVideo: (videoId: string) => void;
-  onOpenWallet: () => void;
 }
 
-export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
-  videos,
-  user,
-  onOpenVideo,
-  onOpenWallet
-}) => {
-  const [viewMode, setViewMode] = useState<'rails' | 'grid'>('rails');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+const anchorFor = (name: string) => `shelf-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+
+export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({ videos, user, onOpenVideo }) => {
   const [pricingFilter, setPricingFilter] = useState<'all' | 'free' | 'paid'>('all');
-  const [displayCount, setDisplayCount] = useState(12);
+  const [sortBy, setSortBy] = useState<'featured' | 'newest' | 'price_low' | 'price_high'>('featured');
+  const [activeShelf, setActiveShelf] = useState<string>('');
 
-  // Filtered list for grid view or filtered rails
-  const filteredVideos = videos.filter(v => {
-    if (selectedCategory !== 'all' && v.category !== selectedCategory) return false;
-    if (pricingFilter === 'free' && !v.isFree) return false;
-    if (pricingFilter === 'paid' && v.isFree) return false;
-    return true;
-  });
-
-  // Categorized collections for horizontal rails
-  const continueWatchingVideos = user.watchHistory
-    .map(w => videos.find(v => v.id === w.videoId))
-    .filter((v): v is Video => !!v);
-
-  const trendingVideos = videos.filter(v => v.isTrending);
-  const newReleases = videos.filter(v => v.isNewRelease);
-  const freeVideos = videos.filter(v => v.isFree);
-  const premiumVideos = videos.filter(v => !v.isFree);
-
-  // Rails per category are built from the actual category strings the products carry.
+  const pageSize = store.getSectionSize();
   const categories = Array.from(new Set(videos.map(v => v.category))).sort();
-  const videosByCategory = categories.map(cat => ({
-    category: cat,
-    list: videos.filter(v => v.category === cat),
-  }));
 
-  const categoryPills = [
-    { id: 'all', label: 'All Videos' },
-    ...categories.map(cat => ({ id: cat, label: cat })),
-  ];
+  const ordered = (list: Video[]) => {
+    if (sortBy === 'price_low') return [...list].sort((a, b) => a.creditPrice - b.creditPrice);
+    if (sortBy === 'price_high') return [...list].sort((a, b) => b.creditPrice - a.creditPrice);
+    if (sortBy === 'newest') return [...list].sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+    return [...list].sort((a, b) => Number(b.isFeatured) - Number(a.isFeatured) || b.creditPrice - a.creditPrice);
+  };
+
+  const shelves = categories
+    .map(category => ({
+      category,
+      anchor: anchorFor(category),
+      list: ordered(
+        videos.filter(v => {
+          if (v.category !== category) return false;
+          if (pricingFilter === 'free') return v.isFree;
+          if (pricingFilter === 'paid') return !v.isFree;
+          return true;
+        })
+      )
+    }))
+    .filter(group => group.list.length > 0);
+
+  // The pinned bar has to say which shelf the shopper is actually looking at.
+  useEffect(() => {
+    const probe = 160;
+    const onScroll = () => {
+      let current = '';
+      for (const shelf of shelves) {
+        const el = document.getElementById(shelf.anchor);
+        if (el && el.getBoundingClientRect().top <= probe) current = shelf.anchor;
+      }
+      setActiveShelf(prev => (prev === current ? prev : current));
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [shelves.map(s => s.anchor).join('|'), pricingFilter, sortBy]);
+
+  const jump = (anchor: string) => {
+    const el = document.getElementById(anchor);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   return (
-    <div className="py-6 space-y-6">
-      
-      {/* Category Navigation Bar & View Mode Toggle */}
-      <div className="max-w-7xl mx-auto px-4 md:px-8 flex flex-wrap items-center justify-between gap-4">
-        
-        {/* Category Pills — a row you swipe sideways on a phone, wrapping from tablet up */}
-        <div className="flex w-full gap-1.5 overflow-x-auto overscroll-x-contain pb-1 text-xs sm:w-auto sm:flex-wrap sm:items-center sm:overflow-visible sm:pb-0">
-          {categoryPills.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => setSelectedCategory(cat.id)}
-              className={`shrink-0 px-3 py-1.5 rounded-xl font-semibold transition-all border text-left sm:w-auto ${selectedCategory === cat.id ? 'bg-purple-600 border-purple-500 text-white shadow-sm' : 'bg-[#121422] border-white/10 text-slate-400 hover:text-white'}`}
-            >
-              {cat.label}
-            </button>
-          ))}
-        </div>
+    <div className="py-6 space-y-5">
 
-        {/* Pricing filter & Grid/Rails view toggle */}
-        <div className="flex items-center gap-3 text-xs">
-          <select
-            value={pricingFilter}
-            onChange={e => setPricingFilter(e.target.value as any)}
-            className="bg-[#121422] border border-white/10 text-white rounded-xl px-3 py-1.5 focus:outline-none focus:border-purple-500"
-            aria-label="Filter by price"
-          >
-            <option value="all">Any Pricing</option>
-            <option value="free">100% Free</option>
-            <option value="paid">Credit Unlocks</option>
-          </select>
+      {/* Pinned category bar: jump to a shelf, and it lights up as you scroll past them. */}
+      <div className="sticky top-[57px] md:top-[63px] z-30 bg-[#090a12]/95 backdrop-blur-xl border-y border-white/[0.06]">
+        <div className="max-w-7xl mx-auto px-4 md:px-8 py-2 flex flex-wrap items-center gap-2">
+          <div className="flex w-full gap-1.5 overflow-x-auto overscroll-x-contain text-xs sm:w-auto sm:flex-wrap sm:items-center sm:overflow-visible">
+            {shelves.map(group => (
+              <button
+                key={group.anchor}
+                onClick={() => jump(group.anchor)}
+                className={`shrink-0 px-3 py-1.5 rounded-xl font-semibold transition-all border text-left ${
+                  activeShelf === group.anchor
+                    ? 'bg-purple-600 border-purple-500 text-white'
+                    : 'bg-[#121422] border-white/10 text-slate-400 hover:text-white'
+                }`}
+              >
+                {group.category}
+                <span className="ml-1.5 text-[10px] opacity-70 tabular-nums">{group.list.length}</span>
+              </button>
+            ))}
+          </div>
 
-          <div className="flex items-center bg-[#121422] border border-white/10 rounded-xl p-0.5">
-            <button
-              onClick={() => setViewMode('rails')}
-              className={`p-1.5 rounded-lg transition-colors ${viewMode === 'rails' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}
-              title="Streaming Rails View"
-              aria-label="Streaming Rails View"
+          <div className="flex items-center gap-2 text-xs ml-auto">
+            <select
+              value={pricingFilter}
+              onChange={e => setPricingFilter(e.target.value as 'all' | 'free' | 'paid')}
+              className="bg-[#121422] border border-white/10 text-white rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-purple-500"
+              aria-label="Filter by price"
             >
-              <Rows className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setViewMode('grid')}
-              className={`p-1.5 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}
-              title="Catalog Grid View"
-              aria-label="Catalog Grid View"
+              <option value="all">Any Pricing</option>
+              <option value="free">100% Free</option>
+              <option value="paid">Credit Unlocks</option>
+            </select>
+
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as typeof sortBy)}
+              className="bg-[#121422] border border-white/10 text-white rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-purple-500"
+              aria-label="Sort videos"
             >
-              <LayoutGrid className="w-4 h-4" />
-            </button>
+              <option value="featured">Featured First</option>
+              <option value="newest">Recently Added</option>
+              <option value="price_low">Price: Low to High</option>
+              <option value="price_high">Price: High to Low</option>
+            </select>
           </div>
         </div>
-
       </div>
 
-      {/* RAILS VIEW MODE: All 16+ Streaming Sections */}
-      {viewMode === 'rails' && selectedCategory === 'all' && pricingFilter === 'all' ? (
-        <div className="space-y-4">
-          
-          {/* 1. Continue Watching (if user has watch progress) */}
-          {continueWatchingVideos.length > 0 && (
-            <VideoRail
-              title="Continue Watching"
-              videos={continueWatchingVideos}
-              user={user}
-              onOpenVideo={onOpenVideo}
-            />
-          )}
-
-          {/* 2. Trending Videos */}
-          <VideoRail
-            title="Trending Videos"
-            videos={trendingVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 3. Free Videos */}
-          <VideoRail
-            title="Free to Watch"
-            videos={freeVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 4. New Releases */}
-          <VideoRail
-            title="New Releases"
-            videos={newReleases}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 5. Premium Videos */}
-          <VideoRail
-            title="Premium Videos"
-            videos={premiumVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 6. One rail per real category present in the catalogue */}
-          {videosByCategory.map(group => (
-            <VideoRail
-              key={group.category}
-              title={group.category}
-              videos={group.list}
-              user={user}
-              onOpenVideo={onOpenVideo}
-            />
-          ))}
-
+      {shelves.length === 0 ? (
+        <div className="max-w-7xl mx-auto px-4 md:px-8">
+          <div className="text-center py-20 bg-[#121422]/60 border border-white/10 rounded-3xl p-8 space-y-2">
+            <p className="text-slate-400 text-sm">No videos in this price range yet.</p>
+            <button
+              onClick={() => setPricingFilter('all')}
+              className="text-xs text-purple-400 hover:text-purple-300 font-bold"
+            >
+              Show every video
+            </button>
+          </div>
         </div>
       ) : (
-        /* GRID VIEW MODE (or when category filter is selected) */
-        <div className="max-w-7xl mx-auto px-4 md:px-8 space-y-6">
-          <div className="flex items-center justify-between text-xs text-slate-400 border-b border-white/10 pb-3">
-            <span>
-              Showing {filteredVideos.slice(0, displayCount).length} of {filteredVideos.length} videos
-            </span>
-          </div>
-
-          {filteredVideos.length === 0 ? (
-            <div className="text-center py-20 bg-[#121422]/60 border border-white/10 rounded-3xl p-8 space-y-2">
-              <p className="text-slate-400 text-sm">No videos match this filter combination.</p>
-              <button
-                onClick={() => {
-                  setSelectedCategory('all');
-                  setPricingFilter('all');
-                }}
-                className="text-xs text-purple-400 hover:text-purple-300 font-bold"
-              >
-                Reset Filters
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
-                {filteredVideos.slice(0, displayCount).map(video => (
-                  <div key={video.id} className="w-full">
-                    <VideoCard
-                      video={video}
-                      onOpen={onOpenVideo}
-                      isUnlocked={video.isFree || user.unlockedVideoIds.includes(video.id)}
-                      watchProgress={user.watchHistory.find(w => w.videoId === video.id)}
-                      isFavorite={user.favorites.includes(video.id)}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {displayCount < filteredVideos.length && (
-                <div className="text-center pt-6">
-                  <button
-                    onClick={() => setDisplayCount(prev => prev + 8)}
-                    className="bg-[#141626] hover:bg-white/10 border border-white/15 text-white font-semibold px-6 py-3 rounded-xl text-xs transition-colors"
-                  >
-                    Load More Videos ({filteredVideos.length - displayCount} remaining) ↓
-                  </button>
-                </div>
+        <div className="max-w-7xl mx-auto px-4 md:px-8 space-y-8">
+          {shelves.map((group, i) => (
+            <CatalogueSection
+              key={group.category}
+              title={group.category}
+              items={group.list}
+              pageSize={pageSize}
+              anchor={group.anchor}
+              ordinal={i + 1}
+              pinned={false}
+              renderItem={video => (
+                <VideoCard
+                  video={video}
+                  onOpen={onOpenVideo}
+                  isUnlocked={video.isFree || user.unlockedVideoIds.includes(video.id)}
+                  watchProgress={user.watchHistory.find(w => w.videoId === video.id)}
+                  isFavorite={user.favorites.includes(video.id)}
+                />
               )}
-            </>
-          )}
+            />
+          ))}
         </div>
       )}
-
     </div>
   );
 };
