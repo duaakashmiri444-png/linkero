@@ -8,6 +8,29 @@
 
 export type UserRole = 'USER' | 'ADMIN' | 'SUPER_ADMIN';
 
+/**
+ * Hosted media is fetched from the API origin directly, never through this app's own /uploads path.
+ * A proxy in front of a video swallows the Range header, and a browser that cannot seek gets a
+ * mid-file fragment and reports a format error — desktop tolerates it, mobile does not.
+ */
+export const MEDIA_ORIGIN = String(
+  import.meta.env.VITE_MEDIA_ORIGIN ?? (import.meta.env.DEV ? '' : 'https://desi-ero-production.up.railway.app')
+).replace(/\/+$/, '');
+
+/** Absolute address for anything stored in the server's upload folder. */
+export function mediaUrl(url: string | null | undefined): string {
+  const value = String(url ?? '').trim();
+  if (!value.startsWith('/uploads/')) return value;
+  return MEDIA_ORIGIN ? `${MEDIA_ORIGIN}${value}` : value;
+}
+
+/** True for a file this site hosts itself, whether relative or already prefixed. */
+export function isHostedMedia(url: string | null | undefined): boolean {
+  const value = String(url ?? '');
+  if (value.startsWith('/uploads/')) return true;
+  return !!MEDIA_ORIGIN && value.startsWith(`${MEDIA_ORIGIN}/uploads/`);
+}
+
 export interface ApiFailure extends Error {
   code: string;
   status: number;
@@ -502,6 +525,12 @@ export const api = {
     ) =>
       request<{ success: boolean; message: string; demo_url?: string; seconds?: number }>(
         `/api/admin/products/${id}/preview`,
+        { method: 'POST', body }
+      ),
+    /** Read a cover frame from the listing's own video, attach an uploaded image, or clear it. */
+    setCover: (id: number, body: { mode: 'auto' | 'upload' | 'none'; asset_id?: number; at_seconds?: number }) =>
+      request<{ success: boolean; message: string; thumbnail?: string }>(
+        `/api/admin/products/${id}/thumbnail`,
         { method: 'POST', body }
       ),
     attachAsset: (

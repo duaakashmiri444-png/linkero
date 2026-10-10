@@ -757,6 +757,14 @@ class AppStore {
     return { success: true, message: result.message || 'Preview updated.' };
   }
 
+  /** Reads a cover frame from the listing's own video, so a card never has to show stock art. */
+  public async captureCover(productId: number): Promise<ActionResult> {
+    const result = await this.run('cover', () => api.admin.setCover(productId, { mode: 'auto' }));
+    if (!result) return this.fail();
+    await this.refreshCatalogue();
+    return { success: true, message: result.message || 'Cover taken from the video.' };
+  }
+
   public async setPrice(itemId: string, price: number): Promise<ActionResult> {
     const item = this.getVideo(itemId) ?? this.getPack(itemId);
     if (!item) return { success: false, message: 'Item not found in the catalogue.' };

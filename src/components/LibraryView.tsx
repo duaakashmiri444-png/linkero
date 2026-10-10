@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Video, DigitalPack, User } from '../types';
 import { VideoCard } from './VideoCard';
 import { PackCard } from './PackCard';
-import { Play, Download, Bookmark, Clock, CheckCircle2, FolderLock } from 'lucide-react';
+import { Play, Bookmark, Clock, FolderLock } from 'lucide-react';
 
 interface LibraryViewProps {
   videos: Video[];
@@ -47,15 +47,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-4 border-b border-white/10 pb-6">
         <div>
-          <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">
-            PERSONALIZED HUB
-          </span>
-          <h1 className="font-display font-black text-3xl sm:text-4xl text-white tracking-tight mt-1">
+          <h1 className="font-display font-black text-3xl sm:text-4xl text-white tracking-tight">
             My Library
           </h1>
-          <p className="text-slate-400 text-xs sm:text-sm mt-1">
-            Permanent access to all unlocked videos, digital packs, and saved watchlist items.
-          </p>
         </div>
 
         {/* Tab Pills */}
@@ -102,9 +96,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               <div className="w-12 h-12 rounded-full bg-purple-600/20 text-purple-400 flex items-center justify-center mx-auto">
                 <Play className="w-6 h-6 ml-0.5" />
               </div>
-              <h3 className="font-bold text-base text-white">No Unlocked Videos Yet</h3>
-              <p className="text-slate-400 text-xs max-w-sm mx-auto">
-                Unlock full-length streaming videos with your demo credits, or add completely free videos to watch here.
+              <h3 className="font-bold text-base text-white">Nothing unlocked yet</h3>
+              <p className="text-slate-500 text-xs max-w-sm mx-auto">
+                Unlocked videos land here.
               </p>
               <button
                 onClick={onExploreCatalog}
@@ -114,7 +108,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
               {purchasedVideos.map(video => (
                 <VideoCard
                   key={video.id}
@@ -137,9 +131,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               <div className="w-12 h-12 rounded-full bg-purple-600/20 text-purple-400 flex items-center justify-center mx-auto">
                 <FolderLock className="w-6 h-6" />
               </div>
-              <h3 className="font-bold text-base text-white">No Unlocked Packs Yet</h3>
-              <p className="text-slate-400 text-xs max-w-sm mx-auto">
-                Browse our MEGA, Google Drive, and Telegram packs. Once unlocked, permanent verified download tokens appear here.
+              <h3 className="font-bold text-base text-white">No packs unlocked yet</h3>
+              <p className="text-slate-500 text-xs max-w-sm mx-auto">
+                Your download links appear here once you unlock a pack.
               </p>
               <button
                 onClick={onExploreCatalog}
@@ -149,7 +143,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
               {purchasedPacks.map(pack => (
                 <PackCard
                   key={pack.id}
@@ -171,7 +165,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               <p className="text-slate-400 text-xs">No partially watched videos in your history.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
               {continueWatchingVideos.map(({ vid, progress }) => (
                 <VideoCard
                   key={vid.id}
@@ -195,7 +189,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             {favoriteVideos.length === 0 ? (
               <p className="text-xs text-slate-500">No videos saved to watchlist.</p>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
                 {favoriteVideos.map(video => (
                   <VideoCard
                     key={video.id}
@@ -214,7 +208,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             {favoritePacks.length === 0 ? (
               <p className="text-xs text-slate-500">No packs saved to favorites.</p>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
                 {favoritePacks.map(pack => (
                   <PackCard
                     key={pack.id}

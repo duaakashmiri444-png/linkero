@@ -13,40 +13,39 @@ export const Footer: React.FC<FooterProps> = ({ onSelectTab, onOpenWallet }) => 
           <div className="font-display font-black text-xl tracking-tight text-white">
             DESI<span className="text-purple-400">ERO</span> <span className="text-xs bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded border border-purple-500/30">PRO</span>
           </div>
-          <p className="text-slate-400 text-xs leading-relaxed max-w-xs">
-            Premium streaming platform and digital marketplace. Videos play in the inbuilt player, packs deliver the seller's own files, and every unlock is backed by a wallet transaction.
+          <p className="max-w-xs text-xs leading-relaxed text-slate-500">
+            Videos play in-site. Packs deliver the seller's files.
           </p>
         </div>
 
         <div>
-          <h4 className="font-bold text-white text-xs uppercase tracking-wider mb-3">Navigation</h4>
+          <h4 className="font-bold text-white text-xs uppercase tracking-wider mb-3">Browse</h4>
           <ul className="space-y-2 text-xs">
-            <li><button onClick={() => onSelectTab('home')} className="hover:text-white transition-colors">Home Showcase</button></li>
-            <li><button onClick={() => onSelectTab('videos')} className="hover:text-white transition-colors">Video Streaming Catalog</button></li>
-            <li><button onClick={() => onSelectTab('demo')} className="hover:text-white transition-colors">The Demo Room</button></li>
-            <li><button onClick={() => onSelectTab('marketplace')} className="hover:text-white transition-colors">Digital Pack Marketplace</button></li>
-            <li><button onClick={() => onSelectTab('library')} className="hover:text-white transition-colors">My Library</button></li>
+            <li><button onClick={() => onSelectTab('home')} className="hover:text-white transition-colors">Home</button></li>
+            <li><button onClick={() => onSelectTab('videos')} className="hover:text-white transition-colors">Videos</button></li>
+            <li><button onClick={() => onSelectTab('demo')} className="hover:text-white transition-colors">Demo</button></li>
+            <li><button onClick={() => onSelectTab('marketplace')} className="hover:text-white transition-colors">Packs</button></li>
+            <li><button onClick={() => onSelectTab('library')} className="hover:text-white transition-colors">Library</button></li>
           </ul>
         </div>
 
         <div>
-          <h4 className="font-bold text-white text-xs uppercase tracking-wider mb-3">Hosting Platforms</h4>
+          <h4 className="font-bold text-white text-xs uppercase tracking-wider mb-3">Delivered via</h4>
           <ul className="space-y-2 text-xs">
-            <li><span className="text-slate-300">MEGA Cloud Folders</span></li>
-            <li><span className="text-slate-300">Google Drive Shared Mirrors</span></li>
-            <li><span className="text-slate-300">Telegram VIP Channels</span></li>
-            <li><span className="text-slate-300">WhatsApp Communities</span></li>
-            <li><span className="text-slate-300">Inbuilt High-Definition Stream</span></li>
+            <li><span className="text-slate-300">MEGA</span></li>
+            <li><span className="text-slate-300">Google Drive</span></li>
+            <li><span className="text-slate-300">Telegram</span></li>
+            <li><span className="text-slate-300">WhatsApp</span></li>
+            <li><span className="text-slate-300">In-site player</span></li>
           </ul>
         </div>
 
         <div>
-          <h4 className="font-bold text-white text-xs uppercase tracking-wider mb-3">Credits & Membership</h4>
+          <h4 className="font-bold text-white text-xs uppercase tracking-wider mb-3">Credits</h4>
           <ul className="space-y-2 text-xs">
             <li><button onClick={onOpenWallet} className="hover:text-white text-purple-300 font-semibold">Wallet Top-Up</button></li>
-            <li><span>Credits land in your wallet only after the owner verifies your payment reference</span></li>
-            <li><span>Every unlock is recorded in your wallet ledger</span></li>
-            <li><span>Access lasts as long as the listing states</span></li>
+            <li><span>Added after the owner verifies your payment</span></li>
+            <li><span>Every unlock is on your ledger</span></li>
           </ul>
         </div>
       </div>

@@ -1,12 +1,11 @@
 import React from 'react';
 import { Video, User } from '../types';
-import { Play, Bookmark, ShieldCheck, Coins, Sparkles, CheckCircle } from 'lucide-react';
+import { Play, Coins, Sparkles } from 'lucide-react';
 
 interface HeroBannerProps {
   featuredVideo: Video;
   user: User;
   onOpenVideo: (videoId: string) => void;
-  onOpenWallet: () => void;
   onExploreCatalog: () => void;
 }
 
@@ -14,7 +13,6 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   featuredVideo,
   user,
   onOpenVideo,
-  onOpenWallet,
   onExploreCatalog
 }) => {
   const isUnlocked = featuredVideo.isFree || user.unlockedVideoIds.includes(featuredVideo.id);
@@ -45,8 +43,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             <span className="text-slate-400">·</span>
             <span className="text-slate-300">{featuredVideo.category}</span>
             <span className="text-slate-400">·</span>
-            <span className="text-slate-300">{featuredVideo.duration}</span>
-            <span className="text-slate-400">·</span>
+            {featuredVideo.duration ? (
+              <>
+                <span className="text-slate-300">{featuredVideo.duration}</span>
+                <span className="text-slate-400">·</span>
+              </>
+            ) : null}
             <span className="text-amber-400">★ {featuredVideo.rating.toFixed(1)}</span>
           </div>
 
@@ -54,13 +56,9 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             {featuredVideo.title}
           </h1>
 
-          <p className="text-slate-300 text-sm md:text-base max-w-xl leading-relaxed">
+          <p className="line-clamp-2 max-w-xl text-sm leading-relaxed text-slate-400 md:text-base">
             {featuredVideo.description}
           </p>
-
-          <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
-            <span>{featuredVideo.views.toLocaleString()} viewers</span>
-          </div>
 
           {/* Action Button Row */}
           <div className="flex flex-wrap items-center gap-3 pt-3">
@@ -78,7 +76,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 className="bg-white/10 hover:bg-white/15 border border-white/20 text-white font-semibold px-5 py-3 rounded-xl text-sm flex items-center gap-2 transition-all hover:border-purple-400/50"
               >
                 <Coins className="w-4 h-4 text-purple-300" />
-                Unlock for {featuredVideo.creditPrice} Credits
+                {featuredVideo.creditPrice} CR
               </button>
             )}
 
@@ -86,18 +84,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               onClick={onExploreCatalog}
               className="bg-transparent hover:bg-white/5 border border-white/10 text-slate-300 hover:text-white font-semibold px-4 py-3 rounded-xl text-sm transition-all"
             >
-              Browse Catalog ↓
-            </button>
-          </div>
-
-          {/* Wallet credit badge summary */}
-          <div className="flex items-center gap-3 text-xs text-slate-400 pt-2">
-            <span>Your Balance: <strong className="text-purple-300 font-bold">{user.walletBalance} Credits</strong></span>
-            <button
-              onClick={onOpenWallet}
-              className="text-purple-400 hover:text-purple-300 font-semibold underline underline-offset-2"
-            >
-              + Top Up Credits
+              Browse ↓
             </button>
           </div>
         </div>
@@ -120,16 +107,13 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                   <Play className="w-7 h-7 fill-white ml-1" />
                 </div>
               </div>
-              <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-white">
-                <span className="font-semibold truncate pr-2">{featuredVideo.title}</span>
-                <span className="shrink-0 bg-black/70 px-2 py-0.5 rounded font-mono text-[11px]">
-                  {featuredVideo.duration}
-                </span>
+              <div className="absolute bottom-3 right-3">
+                {featuredVideo.duration && (
+                  <span className="bg-black/70 px-2 py-0.5 rounded font-mono text-[11px] text-white">
+                    {featuredVideo.duration}
+                  </span>
+                )}
               </div>
-            </div>
-            <div className="p-3 bg-[#141626] flex items-center justify-between text-xs">
-              <span className="text-slate-400">Click to launch player & controls</span>
-              <span className="text-purple-400 font-bold">Open Player ↗</span>
             </div>
           </div>
         </div>

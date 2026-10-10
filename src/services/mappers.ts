@@ -1,3 +1,4 @@
+import { isHostedMedia, mediaUrl } from './api';
 import type {
   ContentAccess,
   LibraryEntry,
@@ -12,6 +13,20 @@ import type { DigitalPack, NotificationItem, PackVideo, Transaction, User, Video
 
 const PACK_TYPES = new Set(['DIGITAL_RESOURCE', 'COMMUNITY', 'EXTERNAL_RESOURCE', 'IMAGE_GALLERY']);
 const VIDEO_TYPES = new Set(['VIDEO', 'COURSE']);
+
+/**
+ * Cover art for a listing with no video to read a frame from. Inline so a card is never a broken
+ * image icon; the server fills this in with a real frame as soon as one is available.
+ */
+export const PLACEHOLDER_COVER = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#151925"/><stop offset="1" stop-color="#0B0E16"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><circle cx="320" cy="180" r="52" fill="#7C5CFF" opacity="0.18"/><path d="M306 156l42 24-42 24z" fill="#7C5CFF"/></svg>'
+)}`;
+
+/** A cover the catalogue can actually draw. */
+function coverOf(value: string | null | undefined): string {
+  const url = mediaUrl(value);
+  return url || PLACEHOLDER_COVER;
+}
 
 export function isPackProduct(p: ProductRow): boolean {
   if (PACK_TYPES.has(String(p.premium_type))) return true;
@@ -45,10 +60,38 @@ export function humanBytes(bytes: number): string {
 }
 
 const PLAYABLE_EXT = /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i;
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i;
+const EMBED_PATTERNS = [/youtube\.com\/embed\//i, /youtube-nocookie\.com\/embed\//i, /player\.vimeo\.com\//i];
 
 /** True only for an address the site's own <video> player can stream. */
 export function isPlayableVideoUrl(url: string | null | undefined): boolean {
-  return !!url && (url.startsWith('/uploads/') || PLAYABLE_EXT.test(url));
+  if (!url) return false;
+  if (IMAGE_EXT.test(url)) return false;
+  return isHostedMedia(url) || PLAYABLE_EXT.test(url);
+}
+
+/**
+ * What the player should actually do with an address. Sellers attach all kinds of things as a
+ * "preview" — a cut clip, a photo, a YouTube embed, a landing page — and a <video> tag fails
+ * silently on three of those four. Classifying first means the player either shows the right
+ * element or explains why it cannot.
+ */
+export type SourceKind = 'FILE' | 'EMBED' | 'PHOTO' | 'DESTINATION' | 'NONE';
+
+export function classifySource(url: string | null | undefined): SourceKind {
+  if (!url) return 'NONE';
+  if (EMBED_PATTERNS.some(re => re.test(url))) return 'EMBED';
+  if (IMAGE_EXT.test(url) || /unsplash\.it|images\.unsplash\.com/i.test(url)) return 'PHOTO';
+  if (isPlayableVideoUrl(url)) return 'FILE';
+  if (/^(https?:)?\/\//i.test(url)) return 'DESTINATION';
+  return 'NONE';
+}
+
+/** YouTube/Vimeo addresses become an embeddable player frame instead of a broken video tag. */
+export function embedFrameUrl(url: string): string {
+  const watch = url.match(/(?:youtube\.com|youtu\.be)\/(?:watch\?v=|embed\/)([\w-]{6,})/i);
+  if (watch) return `https://www.youtube-nocookie.com/embed/${watch[1]}?rel=0&autoplay=1`;
+  return url.includes('?') ? `${url}&autoplay=1` : `${url}?autoplay=1`;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -107,19 +150,30 @@ export function platformLabel(p: ProductRow): string {
   return platformLabels(p)[0];
 }
 
+/** Names the delivery service behind a link the in-site player cannot stream. */
+export function destinationLabel(url: string): string {
+  for (const [pattern, label] of DESTINATION_PATTERNS) if (pattern.test(url)) return label;
+  if (/youtube\.com|youtu\.be/i.test(url)) return 'YouTube';
+  if (/vimeo\.com/i.test(url)) return 'Vimeo';
+  return 'External link';
+}
+
 export function toVideo(p: ProductRow): Video {
   const durationSeconds = Number(p.duration_seconds ?? 0);
+  const demo = (p.demo_url ?? '').trim();
   return {
     productId: p.id,
     id: String(p.id),
     slug: p.slug,
     title: p.title,
     description: p.description ?? '',
-    thumbnail: p.thumbnail ?? '',
-    backdrop: p.thumbnail ?? '',
-    previewUrl: p.demo_type === 'VIDEO' ? p.demo_url ?? '' : '',
+    thumbnail: coverOf(p.thumbnail),
+    backdrop: coverOf(p.thumbnail),
+    previewUrl: p.demo_type === 'VIDEO' && classifySource(demo) === 'FILE' ? mediaUrl(demo) : '',
+    previewKind: classifySource(demo),
+    previewSource: mediaUrl(demo),
     streamUrl: null,
-    duration: formatDuration(durationSeconds),
+    duration: durationSeconds > 0 ? formatDuration(durationSeconds) : '',
     durationSeconds,
     isFree: Number(p.price) === 0,
     creditPrice: Number(p.price ?? 0),
@@ -145,7 +199,7 @@ export function toPack(p: ProductRow): DigitalPack {
     slug: p.slug,
     title: p.title,
     description: p.description ?? '',
-    coverImage: p.thumbnail ?? '',
+    coverImage: coverOf(p.thumbnail),
     platform: platformLabel(p),
     platforms: platformLabels(p),
     category: p.category ?? 'Uncategorised',
@@ -154,7 +208,7 @@ export function toPack(p: ProductRow): DigitalPack {
     creditPrice: Number(p.price ?? 0),
     files: [],
     videoCount: Number(p.playable_count ?? 0),
-    demoUrl: p.demo_type === 'VIDEO' ? p.demo_url ?? '' : '',
+    demoUrl: p.demo_type === 'VIDEO' ? mediaUrl(p.demo_url) : '',
     previewPhotos: [],
     previewClips: [],
     videos: [],
@@ -173,16 +227,16 @@ export function applyStreamAccess(video: Video, access: ContentAccess): Video {
   const durationSeconds = Number(lesson?.duration_seconds ?? video.durationSeconds ?? 0);
   return {
     ...video,
-    streamUrl: lesson?.video_url ?? access.product.premium_resource_url ?? null,
+    streamUrl: mediaUrl(lesson?.video_url ?? access.product.premium_resource_url ?? null) || null,
     durationSeconds,
-    duration: formatDuration(durationSeconds),
+    duration: durationSeconds > 0 ? formatDuration(durationSeconds) : '',
     access: access.access ?? video.access,
   };
 }
 
 /** Deliverable files for a pack, available only from an authorised /content/:id/access call. */
 export function applyPackAccess(pack: DigitalPack, access: ContentAccess, files: MediaRow[]): DigitalPack {
-  const withSize = files.map(f => ({ ...f, url: f.url ?? null }));
+  const withSize = files.map(f => ({ ...f, url: mediaUrl(f.url) || null }));
   return {
     ...pack,
     files: withSize,
@@ -192,7 +246,7 @@ export function applyPackAccess(pack: DigitalPack, access: ContentAccess, files:
       .map((l): PackVideo => ({
         id: l.id,
         title: l.title,
-        url: l.video_url as string,
+        url: mediaUrl(l.video_url),
         durationSeconds: Number(l.duration_seconds ?? 0),
       })),
     access: access.access ?? pack.access,
@@ -201,7 +255,9 @@ export function applyPackAccess(pack: DigitalPack, access: ContentAccess, files:
 
 /** Public preview photos and demo clips, from the unauthenticated product detail call. */
 export function applyPackPreview(pack: DigitalPack, media: MediaRow[]): DigitalPack {
-  const open = media.filter(m => m.access_level === 'DEMO' && !!m.url);
+  const open = media
+    .filter(m => m.access_level === 'DEMO' && !!m.url)
+    .map(m => ({ ...m, url: mediaUrl(m.url) }));
   return {
     ...pack,
     previewPhotos: open.filter(m => m.media_type === 'DEMO_PHOTO'),
@@ -261,7 +317,7 @@ export function toUser(
     id: session.id,
     name: session.username,
     email: session.email,
-    avatar: session.avatar_url ?? '',
+    avatar: mediaUrl(session.avatar_url),
     role: session.role,
     walletBalance: Number(wallet?.balance ?? 0),
     currency: wallet?.currency ?? 'CREDITS',

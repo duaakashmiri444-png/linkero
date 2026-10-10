@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { DigitalPack, User } from '../types';
 import { PackCard } from './PackCard';
-import { Cloud, HardDrive, Send, MessageCircle, Package, Sparkles, PlayCircle } from 'lucide-react';
+import { Cloud, HardDrive, Send, MessageCircle, Package, PlayCircle } from 'lucide-react';
 
 /** Not a delivery platform — a shelf for packs whose contents include videos that play here. */
 const VIDEO_PACKS_TAB = 'video-packs';
@@ -70,17 +70,11 @@ export const Marketplace: React.FC<MarketplaceProps> = ({ packs, user, onOpenPac
       
       {/* Marketplace Header */}
       <div className="rounded-3xl p-6 sm:p-10 bg-gradient-to-r from-[#171529] via-[#121322] to-purple-950/40 border border-white/10 space-y-3">
-        <div className="inline-flex items-center gap-1.5 text-xs font-bold text-purple-300 bg-purple-500/20 px-3 py-1 rounded-full border border-purple-500/30">
-          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-          DIGITAL ARCHIVES & PACKS
-        </div>
         <h1 className="font-display font-black text-3xl sm:text-4xl lg:text-5xl text-white tracking-tight">
           Digital Pack Marketplace
         </h1>
-        <p className="text-slate-300 text-sm sm:text-base max-w-2xl leading-relaxed">
-          Archives, documents and bundles — some served straight from this server, some handed over as MEGA, Google Drive, Telegram or WhatsApp links.
-          {' '}<span className="text-white font-semibold">Video Packs</span> hold clips the seller attached here: unlock one and every clip plays inside this site, like your own gallery, and can still be saved.
-          Unlocking a pack reveals exactly what the seller attached, and nothing before payment.
+        <p className="max-w-2xl text-sm text-slate-400 sm:text-base">
+          Files and clips, delivered in-site or through the seller's own link.
         </p>
       </div>
 
@@ -140,10 +134,10 @@ export const Marketplace: React.FC<MarketplaceProps> = ({ packs, user, onOpenPac
         <div className="text-center py-16 bg-[#121422]/60 border border-white/10 rounded-2xl p-8 space-y-2">
           <p className="text-slate-400 text-sm">
             {selectedPlatform === VIDEO_PACKS_TAB
-              ? 'No pack here has videos in it yet. Publish one from the admin panel with clips under "Videos buyers watch in-site".'
+              ? 'No video packs yet.'
               : selectedPlatform === 'all'
-                ? 'No digital packs in the catalog yet.'
-                : `Nothing is delivered through ${selectedPlatform} right now. Add a ${selectedPlatform} link to a pack from the admin panel and it appears here.`}
+                ? 'No digital packs yet.'
+                : `Nothing delivered through ${selectedPlatform} yet.`}
           </p>
           <button
             onClick={() => {
@@ -156,7 +150,7 @@ export const Marketplace: React.FC<MarketplaceProps> = ({ packs, user, onOpenPac
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
           {sortedPacks.map(pack => (
             <PackCard
               key={pack.id}

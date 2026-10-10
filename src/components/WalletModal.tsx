@@ -140,7 +140,6 @@ export const WalletModal: React.FC<WalletModalProps> = ({ onClose, onToast }) =>
             </div>
             <div>
               <h2 className="text-base font-bold text-white">Wallet & Credits</h2>
-              <p className="text-xs text-slate-400">Send a payment, submit its reference, and the owner credits your wallet</p>
             </div>
           </div>
           <button
@@ -162,8 +161,8 @@ export const WalletModal: React.FC<WalletModalProps> = ({ onClose, onToast }) =>
                 <span className="font-display font-black text-4xl text-white tabular-nums">{user.walletBalance}</span>
                 <span className="text-purple-300 text-sm font-bold">{user.currency}</span>
               </div>
-              <p className="text-xs text-slate-400 mt-1">
-                Signed in as {user.name || user.email}. Credits are shared by videos and paid packs.
+              <p className="text-xs text-slate-500 mt-1">
+                Signed in as {user.name || user.email}
               </p>
             </div>
             <button
@@ -177,14 +176,13 @@ export const WalletModal: React.FC<WalletModalProps> = ({ onClose, onToast }) =>
 
           {!store.isAuthenticated() ? (
             <div className="rounded-xl border border-white/10 bg-[#141626] p-5 text-sm text-slate-300">
-              Sign in before adding credits — top-ups are tied to your account and its wallet.
+              Sign in to add credits.
             </div>
           ) : channels.length === 0 ? (
             <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-5 text-sm text-amber-200 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
-                No payment channel is open right now. The owner enables channels in Control Panel → Payments, and they
-                appear here automatically.
+                No payment channel is open right now.
               </span>
             </div>
           ) : (
@@ -268,8 +266,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({ onClose, onToast }) =>
                       </a>
                     )}
                     <p className="text-slate-500 pt-1 border-t border-white/5">
-                      Pay {activeChannel.provider.description || activeChannel.provider.name.toLowerCase()} — then fill in the
-                      reference below so the owner can match it.
+                      Pay with {activeChannel.provider.name}, then enter the reference.
                     </p>
                   </div>
                 )}
@@ -325,8 +322,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({ onClose, onToast }) =>
                 <p className="text-[11px] text-slate-400 flex items-start gap-1.5">
                   <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-purple-400" />
                   <span>
-                    Nothing is credited automatically. The owner checks your reference against their account statement and
-                    then adds the credits; you will see the entry in the ledger below once they approve it.
+                    Credits are added after the owner verifies your reference.
                   </span>
                 </p>
               </div>
@@ -371,7 +367,7 @@ export const WalletModal: React.FC<WalletModalProps> = ({ onClose, onToast }) =>
               </div>
             )}
             <p className="text-[10px] text-slate-500">
-              Codes discount a purchase at checkout — they do not add free credits to the wallet.
+              Codes discount a purchase, not a top-up.
             </p>
           </div>
 

@@ -111,14 +111,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({ targetId, targetTitle,
         {nothingConfigured ? (
           <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/25 rounded-xl px-3 py-2.5 flex items-start gap-2">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-            <span>The owner has not published a support channel yet, so this report cannot be sent. Copy the text above and try again later.</span>
+            <span>No support channel has been published yet. Copy the text above and try again later.</span>
           </div>
         ) : (
           <div className="space-y-2">
-            <p className="text-[11px] text-slate-400">
-              Send it to the review desk — {support?.hours || 'support hours not set'}. Reports are handled by a human;
-              nothing is filed automatically.
-            </p>
             <div className="flex flex-wrap gap-2">
               {whatsappHref && (
                 <a

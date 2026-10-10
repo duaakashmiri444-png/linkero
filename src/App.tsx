@@ -73,7 +73,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#090a12] text-slate-100 flex flex-col font-sans selection:bg-purple-600 selection:text-white">
+    <div className="min-h-screen bg-[#090a12] text-slate-100 flex flex-col font-sans selection:bg-purple-600 selection:text-white pb-[calc(env(safe-area-inset-bottom)+4.75rem)] lg:pb-0">
       
       {/* Universal Top Bar */}
       <Navbar
@@ -97,7 +97,6 @@ export default function App() {
                 featuredVideo={featuredVideo}
                 user={user}
                 onOpenVideo={(id) => setSelectedVideoId(id)}
-                onOpenWallet={() => setIsWalletOpen(true)}
                 onExploreCatalog={() => setActiveTab('videos')}
               />
             )}
@@ -110,10 +109,7 @@ export default function App() {
                     <Sparkles className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-bold text-white">Preview Content Before Unlocking</h2>
-                    <p className="text-xs text-slate-300">
-                      Free videos play end to end. Paid listings show only the demo clip the seller attached — the full stream unlocks with credits.
-                    </p>
+                    <h2 className="text-sm font-bold text-white">Watch before you buy</h2>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -140,7 +136,6 @@ export default function App() {
               {user.watchHistory.length > 0 && (
                 <VideoRail
                   title="Continue Watching"
-                  subtitle="Resume your last watched videos"
                   videos={user.watchHistory.map(w => videos.find(v => v.id === w.videoId)).filter((v): v is Video => !!v)}
                   user={user}
                   onOpenVideo={(id) => setSelectedVideoId(id)}
@@ -150,7 +145,6 @@ export default function App() {
               {/* Trending Rail */}
               <VideoRail
                 title="Trending Right Now"
-                subtitle="The streams buyers have opened the most"
                 videos={videos.filter(v => v.isTrending)}
                 user={user}
                 onOpenVideo={(id) => setSelectedVideoId(id)}
@@ -160,7 +154,6 @@ export default function App() {
               {/* Free Videos Rail */}
               <VideoRail
                 title="100% Free Videos"
-                subtitle="Stream full videos with zero credit deduction"
                 videos={videos.filter(v => v.isFree)}
                 user={user}
                 onOpenVideo={(id) => setSelectedVideoId(id)}
@@ -176,7 +169,6 @@ export default function App() {
                   <VideoRail
                     key={group[0].category}
                     title={group[0].category}
-                    subtitle={`${group.length} stream${group.length === 1 ? '' : 's'} in this category`}
                     videos={group}
                     user={user}
                     onOpenVideo={(id) => setSelectedVideoId(id)}
@@ -187,7 +179,6 @@ export default function App() {
               {/* Highest rated streams */}
               <VideoRail
                 title="Highest Rated"
-                subtitle="Ranked by the average rating on each listing"
                 videos={[...videos].filter(v => v.ratingCount > 0).sort((a, b) => b.rating - a.rating).slice(0, 12)}
                 user={user}
                 onOpenVideo={(id) => setSelectedVideoId(id)}

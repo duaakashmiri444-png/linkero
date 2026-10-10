@@ -80,37 +80,20 @@ export const PackCard: React.FC<PackCardProps> = ({ pack, onOpen, isUnlocked }) 
         </div>
 
         {/* Card Info */}
-        <div className="p-4 space-y-2">
-          <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            <span className="text-purple-300 font-semibold">{pack.category}</span>
-            <span>·</span>
+        <div className="p-3.5 flex flex-col gap-1">
+          <h3 className="font-semibold text-sm text-white group-hover:text-purple-300 transition-colors line-clamp-1">
+            {pack.title}
+          </h3>
+          <div className="flex items-center gap-2 text-[11px] text-slate-500">
+            <span className="text-purple-300/80 font-semibold">{pack.category}</span>
+            <span aria-hidden="true">·</span>
             <span>
               {pack.videoCount > 0
                 ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}`
                 : `${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}`}
             </span>
-            <span>·</span>
-            <span>★ {pack.rating.toFixed(1)}</span>
           </div>
-
-          <h3 className="font-semibold text-sm text-white group-hover:text-purple-300 transition-colors line-clamp-1">
-            {pack.title}
-          </h3>
-
-          <p className="text-slate-400 text-xs line-clamp-2 leading-relaxed">
-            {pack.description}
-          </p>
         </div>
-      </div>
-
-      {/* Card Action Footer */}
-      <div className="p-4 pt-2 border-t border-white/[0.06] flex items-center justify-between text-xs">
-        <span className="text-slate-400 text-[11px]">
-          {pack.salesCount} purchases
-        </span>
-        <span className="text-purple-400 font-bold group-hover:text-purple-300 group-hover:underline">
-          {isUnlocked ? 'View Files →' : `Unlock (${pack.creditPrice} CR) →`}
-        </span>
       </div>
     </div>
   );

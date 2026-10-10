@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DigitalPack, MediaRow, PackVideo, User } from '../types';
 import { store } from '../services/store';
+import { isHostedMedia } from '../services/api';
 import { formatDuration, humanBytes } from '../services/mappers';
 import {
   X,
@@ -391,7 +392,7 @@ export const PackDetailsModal: React.FC<PackDetailsModalProps> = ({
                       <ul className="space-y-2 max-h-64 overflow-y-auto pr-1">
                         {files.map((f, idx) => {
                           const name = f.label || f.caption || `File ${idx + 1}`;
-                          const external = !!f.url && !f.url.startsWith('/uploads/');
+                          const external = !!f.url && !isHostedMedia(f.url);
                           const host = (f.url ?? '').replace(/^https?:\/\//i, '').split(/[/?#]/)[0];
                           return (
                             <li

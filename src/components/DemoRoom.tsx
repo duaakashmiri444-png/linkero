@@ -59,9 +59,6 @@ export const DemoRoom: React.FC<DemoRoomProps> = ({
           <h1 className="font-display font-black text-3xl sm:text-4xl lg:text-5xl text-white tracking-tight">
             The Demo Room
           </h1>
-          <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
-            Test and preview content risk-free. Free videos stream completely without deductions. Paid previews showcase the real demo clip before purchasing.
-          </p>
         </div>
       </div>
 
@@ -132,7 +129,7 @@ export const DemoRoom: React.FC<DemoRoomProps> = ({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
           {sortedVideos.map(video => {
             const isUnlocked = video.isFree || user.unlockedVideoIds.includes(video.id);
             const watchHistory = user.watchHistory.find(w => w.videoId === video.id);

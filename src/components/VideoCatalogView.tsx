@@ -114,7 +114,6 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
           {continueWatchingVideos.length > 0 && (
             <VideoRail
               title="Continue Watching"
-              subtitle="Pick up right where you left off"
               videos={continueWatchingVideos}
               user={user}
               onOpenVideo={onOpenVideo}
@@ -124,7 +123,6 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
           {/* 2. Trending Videos */}
           <VideoRail
             title="Trending Videos"
-            subtitle="Most streamed titles across all regions this week"
             videos={trendingVideos}
             user={user}
             onOpenVideo={onOpenVideo}
@@ -133,7 +131,6 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
           {/* 3. Free Videos */}
           <VideoRail
             title="Free to Watch"
-            subtitle="Full videos streaming with zero credit deduction"
             videos={freeVideos}
             user={user}
             onOpenVideo={onOpenVideo}
@@ -142,7 +139,6 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
           {/* 4. New Releases */}
           <VideoRail
             title="New Releases"
-            subtitle="Fresh drops and recent additions"
             videos={newReleases}
             user={user}
             onOpenVideo={onOpenVideo}
@@ -151,7 +147,6 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
           {/* 5. Premium Videos */}
           <VideoRail
             title="Premium Videos"
-            subtitle="Credit-unlock videos"
             videos={premiumVideos}
             user={user}
             onOpenVideo={onOpenVideo}
@@ -162,7 +157,6 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
             <VideoRail
               key={group.category}
               title={group.category}
-              subtitle={`${group.list.length} title${group.list.length === 1 ? '' : 's'} in ${group.category}`}
               videos={group.list}
               user={user}
               onOpenVideo={onOpenVideo}
@@ -194,7 +188,7 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
                 {filteredVideos.slice(0, displayCount).map(video => (
                   <div key={video.id} className="w-full">
                     <VideoCard

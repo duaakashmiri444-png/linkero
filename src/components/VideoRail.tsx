@@ -5,7 +5,6 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface VideoRailProps {
   title: string;
-  subtitle?: string;
   videos: Video[];
   user: User;
   onOpenVideo: (videoId: string) => void;
@@ -14,7 +13,6 @@ interface VideoRailProps {
 
 export const VideoRail: React.FC<VideoRailProps> = ({
   title,
-  subtitle,
   videos,
   user,
   onOpenVideo,
@@ -35,14 +33,9 @@ export const VideoRail: React.FC<VideoRailProps> = ({
     <section className="py-5 relative">
       {/* Rail Header */}
       <div className="flex items-end justify-between mb-3 px-4 md:px-8">
-        <div>
-          <h2 className="text-xl md:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-            {title}
-          </h2>
-          {subtitle && (
-            <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>
-          )}
-        </div>
+        <h2 className="text-lg md:text-xl font-bold tracking-tight text-white flex items-center gap-2">
+          {title}
+        </h2>
 
         <div className="flex items-center gap-2">
           {onViewAll && (
@@ -88,6 +81,7 @@ export const VideoRail: React.FC<VideoRailProps> = ({
               isUnlocked={isUnlocked}
               watchProgress={watchHistory}
               isFavorite={isFavorite}
+              rail
             />
           );
         })}

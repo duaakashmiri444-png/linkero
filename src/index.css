@@ -36,3 +36,16 @@ h1, h2, h3, .font-display {
   background: #31375c;
 }
 
+/*
+ * Phone legibility pass. The type scale was chosen for a desktop grid, so the smallest steps
+ * (10–12px) end up unreadable on a 390px screen. These rules sit outside Tailwind's utility
+ * layer, so they win over the class in markup without touching spacing anywhere else.
+ */
+@media (max-width: 640px) {
+  .text-\[9px\] { font-size: 11px; }
+  .text-\[10px\] { font-size: 12px; }
+  .text-\[11px\] { font-size: 13px; }
+  .text-xs { font-size: 13.5px; }
+  .text-sm { font-size: 15px; }
+}
+

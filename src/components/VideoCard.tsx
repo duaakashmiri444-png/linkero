@@ -9,6 +9,8 @@ interface VideoCardProps {
   isUnlocked?: boolean;
   watchProgress?: { progressSeconds: number; durationSeconds: number };
   isFavorite?: boolean;
+  /** Rails scroll sideways and need a fixed card width; grids must stretch the card to the cell. */
+  rail?: boolean;
 }
 
 export const VideoCard: React.FC<VideoCardProps> = ({
@@ -16,7 +18,8 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   onOpen,
   isUnlocked,
   watchProgress,
-  isFavorite
+  isFavorite,
+  rail
 }) => {
   const percentWatched = watchProgress && watchProgress.durationSeconds > 0
     ? Math.min(100, Math.round((watchProgress.progressSeconds / watchProgress.durationSeconds) * 100))
@@ -30,7 +33,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   return (
     <div
       onClick={() => onOpen(video.id)}
-      className="group relative bg-[#121422] rounded-2xl overflow-hidden border border-white/[0.08] hover:border-purple-500/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-purple-950/40 cursor-pointer flex flex-col shrink-0 w-64 md:w-72 select-none"
+      className={`group relative bg-[#121422] rounded-2xl overflow-hidden border border-white/[0.08] hover:border-purple-500/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-purple-950/40 cursor-pointer flex flex-col select-none ${rail ? 'shrink-0 w-64 md:w-72' : 'w-full'}`}
     >
       {/* Thumbnail Aspect Container */}
       <div className="relative aspect-video w-full overflow-hidden bg-[#0a0b12]">
@@ -58,17 +61,19 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             </span>
           ) : (
             <span className="text-[10px] font-extrabold uppercase tracking-wider bg-black/75 backdrop-blur-md text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-md shadow-sm tabular-nums">
-              {video.creditPrice} Credits
+              {video.creditPrice} CR
             </span>
           )}
 
         </div>
 
-        {/* Duration badge */}
-        <div className="absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 bg-black/80 backdrop-blur-md text-white text-[10px] font-semibold px-2 py-0.5 rounded-md tabular-nums">
-          <Clock className="w-2.5 h-2.5 text-slate-400" />
-          {video.duration}
-        </div>
+        {/* Duration badge — hidden when the seller never recorded a length */}
+        {video.duration && (
+          <div className="absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 bg-black/80 backdrop-blur-md text-white text-[10px] font-semibold px-2 py-0.5 rounded-md tabular-nums">
+            <Clock className="w-2.5 h-2.5 text-slate-400" />
+            {video.duration}
+          </div>
+        )}
 
         {/* Watchlist toggle in top right */}
         <button
@@ -99,28 +104,14 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       </div>
 
       {/* Card Info Section */}
-      <div className="p-3.5 flex flex-col flex-1 justify-between gap-2">
-        <div>
-          <div className="flex items-center gap-2 text-[11px] text-slate-400 mb-1">
-            <span className="text-purple-300 font-semibold">{video.category}</span>
-            <span aria-hidden="true">·</span>
-            <span>★ {video.rating.toFixed(1)}</span>
-            <span aria-hidden="true">·</span>
-            <span>{video.views > 1000 ? `${(video.views / 1000).toFixed(1)}k` : video.views} views</span>
-          </div>
-          <h3 className="font-semibold text-sm text-white line-clamp-1 group-hover:text-purple-300 transition-colors">
-            {video.title}
-          </h3>
-          <p className="text-slate-400 text-xs line-clamp-2 mt-1 leading-relaxed">
-            {video.description}
-          </p>
-        </div>
-
-        {/* Footer meta / unlock action hint */}
-        <div className="pt-2 border-t border-white/[0.06] flex items-center justify-end text-xs">
-          <span className="text-[11px] font-semibold text-purple-400 group-hover:text-purple-300 group-hover:underline">
-            {video.isFree ? 'Watch Free →' : isUnlocked ? 'Play →' : `Unlock (${video.creditPrice} CR) →`}
-          </span>
+      <div className="p-3.5 flex flex-col flex-1 gap-1">
+        <h3 className="font-semibold text-sm text-white line-clamp-1 group-hover:text-purple-300 transition-colors">
+          {video.title}
+        </h3>
+        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+          <span className="text-purple-300/80 font-semibold">{video.category}</span>
+          {video.ratingCount > 0 && <span aria-hidden="true">·</span>}
+          {video.ratingCount > 0 && <span>★ {video.rating.toFixed(1)}</span>}
         </div>
       </div>
     </div>

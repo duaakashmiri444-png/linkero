@@ -258,6 +258,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
     onToast(result.message);
   };
 
+    /** Cover art comes from the listing's own video, read on the server. */
+  const runCover = async (productId: number) => {
+    setBusy(true);
+    const result = await store.captureCover(productId);
+    setBusy(false);
+    onToast(result.message);
+  };
+
   const openPreviewDialog = (item: { productId: number; title: string; preview?: string }) => {
     setPreviewTarget({ productId: item.productId, title: item.title, hasPreview: !!item.preview });
     setPreviewMode('trim');
@@ -462,6 +470,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                       <td className="p-3 text-[10px] font-bold uppercase text-slate-400">{v.status}</td>
                       <td className="p-3 text-right space-x-2 whitespace-nowrap">
                         <button
+                          onClick={() => void runCover(v.productId)}
+                          className="text-slate-400 hover:text-white p-1 font-semibold"
+                          title="Take the cover from this video"
+                        >
+                          Cover
+                        </button>
+                        <button
                           onClick={() => openPreviewDialog({ productId: v.productId, title: v.title, preview: v.previewUrl })}
                           className="text-slate-400 hover:text-white p-1 font-semibold"
                           title="Choose the clip buyers watch before paying"
@@ -539,6 +554,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                       <td className="p-3 font-mono">{p.salesCount}</td>
                       <td className="p-3 text-[10px] font-bold uppercase text-slate-400">{p.status}</td>
                       <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                        <button
+                          onClick={() => void runCover(p.productId)}
+                          className="text-slate-400 hover:text-white p-1 font-semibold"
+                          title="Take the cover from this pack's video"
+                        >
+                          Cover
+                        </button>
                         <button
                           onClick={() => openPreviewDialog({ productId: p.productId, title: p.title, preview: p.demoUrl })}
                           className="text-slate-400 hover:text-white p-1 font-semibold"

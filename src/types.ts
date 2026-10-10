@@ -21,6 +21,9 @@ export interface Video {
   backdrop: string;
   /** Free preview URL (products.demo_url). The full stream comes from /api/content/:id/access. */
   previewUrl: string;
+  /** What the seller actually attached as a preview — a clip, a photo, an embed or a web link. */
+  previewKind: 'FILE' | 'EMBED' | 'PHOTO' | 'DESTINATION' | 'NONE';
+  previewSource: string;
   /** Set once the viewer holds access; never populated from a list response. */
   streamUrl: string | null;
   duration: string;
