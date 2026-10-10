@@ -24,7 +24,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
 
   const handleFavoriteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    store.toggleFavorite(video.id);
+    void store.toggleFavorite(video.id);
   };
 
   return (
@@ -62,11 +62,6 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             </span>
           )}
 
-          {video.isMasterDemo && (
-            <span className="text-[9px] font-bold uppercase tracking-wider bg-pink-600 text-white px-1.5 py-0.5 rounded-md">
-              MASTER DEMO
-            </span>
-          )}
         </div>
 
         {/* Duration badge */}
@@ -121,15 +116,8 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           </p>
         </div>
 
-        {/* Footer meta / creator / unlock action hint */}
-        <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between text-xs">
-          <div className="flex items-center gap-1.5 text-slate-400">
-            <span className="w-4 h-4 rounded-full bg-purple-900/60 text-purple-300 flex items-center justify-center text-[9px] font-bold">
-              {video.creator.avatar.slice(0, 2)}
-            </span>
-            <span className="truncate max-w-[110px] text-[11px]">{video.creator.name}</span>
-          </div>
-
+        {/* Footer meta / unlock action hint */}
+        <div className="pt-2 border-t border-white/[0.06] flex items-center justify-end text-xs">
           <span className="text-[11px] font-semibold text-purple-400 group-hover:text-purple-300 group-hover:underline">
             {video.isFree ? 'Watch Free →' : isUnlocked ? 'Play →' : `Unlock (${video.creditPrice} CR) →`}
           </span>

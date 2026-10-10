@@ -8,6 +8,7 @@ import { DemoRoom } from './components/DemoRoom';
 import { Marketplace } from './components/Marketplace';
 import { LibraryView } from './components/LibraryView';
 import { AdminPanel } from './components/AdminPanel';
+import { AuthScreen } from './components/AuthScreen';
 import { VideoPlayerModal } from './components/VideoPlayerModal';
 import { PackDetailsModal } from './components/PackDetailsModal';
 import { WalletModal } from './components/WalletModal';
@@ -16,13 +17,17 @@ import { ReportModal } from './components/ReportModal';
 import { Toast } from './components/Toast';
 import { Footer } from './components/Footer';
 import { VideoRail } from './components/VideoRail';
-import { Sparkles, Coins, Play, FolderLock, ShieldCheck } from 'lucide-react';
+import { Sparkles, Play, Loader2 } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [videos, setVideos] = useState<Video[]>(store.getVideos());
   const [packs, setPacks] = useState<DigitalPack[]>(store.getPacks());
   const [user, setUser] = useState<User>(store.getUser());
+  const [booted, setBooted] = useState(store.isBooted());
+  const [loading, setLoading] = useState(store.isLoading());
+  const [showAuth, setShowAuth] = useState(false);
+  const [authReason, setAuthReason] = useState<string | null>(null);
 
   // Modal states
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
@@ -32,13 +37,21 @@ export default function App() {
   const [reportData, setReportData] = useState<{ id: string; title: string; type: 'video' | 'pack' } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Subscribe to central store
   useEffect(() => {
-    return store.subscribe(() => {
+    const unsubscribe = store.subscribe(() => {
       setVideos(store.getVideos());
       setPacks(store.getPacks());
       setUser(store.getUser());
+      setBooted(store.isBooted());
+      setLoading(store.isLoading());
+      if (store.isLoginRequested()) {
+        setAuthReason(store.getStatusMessage());
+        setShowAuth(true);
+        store.clearLoginRequest();
+      }
     });
+    void store.bootstrap();
+    return unsubscribe;
   }, []);
 
   const showToast = (msg: string) => {
@@ -49,6 +62,15 @@ export default function App() {
   };
 
   const featuredVideo = videos.find(v => v.isFeatured) || videos[0];
+
+  if (!booted) {
+    return (
+      <div className="min-h-screen bg-[#090a12] text-slate-100 flex flex-col items-center justify-center gap-3 font-sans">
+        <Loader2 className="w-7 h-7 animate-spin text-purple-400" />
+        <p className="text-sm text-slate-400">Loading the catalogue from the server…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#090a12] text-slate-100 flex flex-col font-sans selection:bg-purple-600 selection:text-white">
@@ -90,7 +112,7 @@ export default function App() {
                   <div>
                     <h2 className="text-sm font-bold text-white">Preview Content Before Unlocking</h2>
                     <p className="text-xs text-slate-300">
-                      Watch completely free videos, preview paid videos up to 30s, or view Master Demos for 9GB+ MEGA & Drive packs.
+                      Free videos play end to end. Paid listings show only the demo clip the seller attached — the full stream unlocks with credits.
                     </p>
                   </div>
                 </div>
@@ -128,7 +150,7 @@ export default function App() {
               {/* Trending Rail */}
               <VideoRail
                 title="Trending Right Now"
-                subtitle="Most popular streams this week"
+                subtitle="The streams buyers have opened the most"
                 videos={videos.filter(v => v.isTrending)}
                 user={user}
                 onOpenVideo={(id) => setSelectedVideoId(id)}
@@ -145,44 +167,31 @@ export default function App() {
                 onViewAll={() => setActiveTab('videos')}
               />
 
-              {/* Pakistani Content */}
+              {/* One rail per category that actually has content */}
+              {Array.from(new Set(videos.map(v => v.category)))
+                .map(cat => videos.filter(v => v.category === cat))
+                .filter(group => group.length >= 2)
+                .slice(0, 4)
+                .map(group => (
+                  <VideoRail
+                    key={group[0].category}
+                    title={group[0].category}
+                    subtitle={`${group.length} stream${group.length === 1 ? '' : 's'} in this category`}
+                    videos={group}
+                    user={user}
+                    onOpenVideo={(id) => setSelectedVideoId(id)}
+                    onViewAll={() => setActiveTab('videos')}
+                  />
+                ))}
+
+              {/* Highest rated streams */}
               <VideoRail
-                title="Pakistani Content"
-                subtitle="Lahore, Karachi, and northern creators"
-                videos={videos.filter(v => v.category === 'Pakistani')}
+                title="Highest Rated"
+                subtitle="Ranked by the average rating on each listing"
+                videos={[...videos].filter(v => v.ratingCount > 0).sort((a, b) => b.rating - a.rating).slice(0, 12)}
                 user={user}
                 onOpenVideo={(id) => setSelectedVideoId(id)}
                 onViewAll={() => setActiveTab('videos')}
-              />
-
-              {/* Indian Content */}
-              <VideoRail
-                title="Indian Content"
-                subtitle="Mumbai studio shoots and runway spotlights"
-                videos={videos.filter(v => v.category === 'Indian')}
-                user={user}
-                onOpenVideo={(id) => setSelectedVideoId(id)}
-                onViewAll={() => setActiveTab('videos')}
-              />
-
-              {/* TikTok Creators */}
-              <VideoRail
-                title="TikTok Creators"
-                subtitle="Viral compilations and backstage bloopers"
-                videos={videos.filter(v => v.category === 'TikTok Creators')}
-                user={user}
-                onOpenVideo={(id) => setSelectedVideoId(id)}
-                onViewAll={() => setActiveTab('videos')}
-              />
-
-              {/* Master Pack Demos */}
-              <VideoRail
-                title="Master Demo Videos"
-                subtitle="Deep walkthroughs of full archives on MEGA & Google Drive"
-                videos={videos.filter(v => v.isMasterDemo || v.category === 'Master Demos')}
-                user={user}
-                onOpenVideo={(id) => setSelectedVideoId(id)}
-                onViewAll={() => setActiveTab('demo')}
               />
             </div>
           </div>
@@ -230,9 +239,26 @@ export default function App() {
           />
         )}
 
-        {/* TAB 6: ADMIN CONTROL PANEL */}
+        {/* TAB 6: ADMIN CONTROL PANEL (real session role only) */}
         {activeTab === 'admin' && (
-          <AdminPanel onToast={showToast} />
+          user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' ? (
+            <AdminPanel onToast={showToast} />
+          ) : (
+            <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
+              <h2 className="text-lg font-bold text-white">Staff area</h2>
+              <p className="text-sm text-slate-400">
+                This tab needs an admin account. Currently signed in as {user.role === 'guest' ? 'a guest' : user.name}.
+              </p>
+              {user.role === 'guest' && (
+                <button
+                  onClick={() => setShowAuth(true)}
+                  className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-5 py-2.5 rounded-xl text-sm"
+                >
+                  Sign in
+                </button>
+              )}
+            </div>
+          )
         )}
 
       </main>
@@ -290,6 +316,26 @@ export default function App() {
           onClose={() => setReportData(null)}
           onToast={showToast}
         />
+      )}
+
+      {/* Real sign-in — replaces the old customer-facing role switcher */}
+      {showAuth && (
+        <AuthScreen
+          reason={authReason}
+          onClose={() => {
+            setShowAuth(false);
+            setAuthReason(null);
+          }}
+          onAuthenticated={msg => showToast(msg)}
+        />
+      )}
+
+      {/* Server round-trip indicator */}
+      {loading && (
+        <div className="fixed bottom-4 right-4 z-[60] flex items-center gap-2 rounded-full bg-black/80 border border-white/10 px-3 py-1.5 text-[11px] text-slate-300">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Contacting server…
+        </div>
       )}
 
       {/* Toast Feedback */}

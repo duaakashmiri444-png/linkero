@@ -36,16 +36,21 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
     .filter((v): v is Video => !!v);
 
   const trendingVideos = videos.filter(v => v.isTrending);
-  const newReleases = videos.filter(v => v.isNewRelease || new Date(v.publishedAt).getTime() > new Date('2026-09-30').getTime());
+  const newReleases = videos.filter(v => v.isNewRelease);
   const freeVideos = videos.filter(v => v.isFree);
   const premiumVideos = videos.filter(v => !v.isFree);
-  const pakistaniVideos = videos.filter(v => v.category === 'Pakistani');
-  const indianVideos = videos.filter(v => v.category === 'Indian');
-  const tiktokVideos = videos.filter(v => v.category === 'TikTok Creators');
-  const modelsVideos = videos.filter(v => v.category === 'Models & Creators');
-  const abacsVideos = videos.filter(v => v.category === 'Trending ABACS');
-  const masterDemoVideos = videos.filter(v => v.isMasterDemo || v.category === 'Master Demos');
-  const otherVideos = videos.filter(v => v.category === 'Other');
+
+  // Rails per category are built from the actual category strings the products carry.
+  const categories = Array.from(new Set(videos.map(v => v.category))).sort();
+  const videosByCategory = categories.map(cat => ({
+    category: cat,
+    list: videos.filter(v => v.category === cat),
+  }));
+
+  const categoryPills = [
+    { id: 'all', label: 'All Videos' },
+    ...categories.map(cat => ({ id: cat, label: cat })),
+  ];
 
   return (
     <div className="py-6 space-y-6">
@@ -53,22 +58,13 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
       {/* Category Navigation Bar & View Mode Toggle */}
       <div className="max-w-7xl mx-auto px-4 md:px-8 flex flex-wrap items-center justify-between gap-4">
         
-        {/* Category Pills */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {[
-            { id: 'all', label: 'All Videos' },
-            { id: 'Pakistani', label: 'Pakistani' },
-            { id: 'Indian', label: 'Indian' },
-            { id: 'TikTok Creators', label: 'TikTok Creators' },
-            { id: 'Models & Creators', label: 'Models & Creators' },
-            { id: 'Trending ABACS', label: 'Trending ABACS' },
-            { id: 'Master Demos', label: 'Master Demos' },
-            { id: 'Other', label: 'Other' }
-          ].map(cat => (
+        {/* Category Pills — a row you swipe sideways on a phone, wrapping from tablet up */}
+        <div className="flex w-full gap-1.5 overflow-x-auto overscroll-x-contain pb-1 text-xs sm:w-auto sm:flex-wrap sm:items-center sm:overflow-visible sm:pb-0">
+          {categoryPills.map(cat => (
             <button
               key={cat.id}
               onClick={() => setSelectedCategory(cat.id)}
-              className={`px-3 py-1.5 rounded-xl font-semibold transition-all border ${selectedCategory === cat.id ? 'bg-purple-600 border-purple-500 text-white shadow-sm' : 'bg-[#121422] border-white/10 text-slate-400 hover:text-white'}`}
+              className={`shrink-0 px-3 py-1.5 rounded-xl font-semibold transition-all border text-left sm:w-auto ${selectedCategory === cat.id ? 'bg-purple-600 border-purple-500 text-white shadow-sm' : 'bg-[#121422] border-white/10 text-slate-400 hover:text-white'}`}
             >
               {cat.label}
             </button>
@@ -152,79 +148,26 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({
             onOpenVideo={onOpenVideo}
           />
 
-          {/* 5. Master Demo Videos */}
-          <VideoRail
-            title="Master Demo Videos"
-            subtitle="In-depth file and archive walkthroughs"
-            videos={masterDemoVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 6. Pakistani Content */}
-          <VideoRail
-            title="Pakistani Content"
-            subtitle="Lahore, Karachi, and northern creators"
-            videos={pakistaniVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 7. Indian Content */}
-          <VideoRail
-            title="Indian Content"
-            subtitle="Mumbai studio shoots, dance, and fashion spotlight"
-            videos={indianVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 8. TikTok Creators */}
-          <VideoRail
-            title="TikTok Creators"
-            subtitle="Viral clips, creator bloopers, and trending sounds"
-            videos={tiktokVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 9. Models & Creators */}
-          <VideoRail
-            title="Models & Creators"
-            subtitle="Editorial shoots and backstage runway reels"
-            videos={modelsVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 10. Trending ABACS Collections */}
-          <VideoRail
-            title="Trending ABACS Collections"
-            subtitle="Exclusive series cuts and high-demand releases"
-            videos={abacsVideos}
-            user={user}
-            onOpenVideo={onOpenVideo}
-          />
-
-          {/* 11. Premium Videos */}
+          {/* 5. Premium Videos */}
           <VideoRail
             title="Premium Videos"
-            subtitle="High definition credit unlocks with 20s free preview"
+            subtitle="Credit-unlock videos"
             videos={premiumVideos}
             user={user}
             onOpenVideo={onOpenVideo}
           />
 
-          {/* 12. Other Categories */}
-          {otherVideos.length > 0 && (
+          {/* 6. One rail per real category present in the catalogue */}
+          {videosByCategory.map(group => (
             <VideoRail
-              title="More Categories & Masterclasses"
-              subtitle="Tutorials and specialized creator masterclasses"
-              videos={otherVideos}
+              key={group.category}
+              title={group.category}
+              subtitle={`${group.list.length} title${group.list.length === 1 ? '' : 's'} in ${group.category}`}
+              videos={group.list}
               user={user}
               onOpenVideo={onOpenVideo}
             />
-          )}
+          ))}
 
         </div>
       ) : (

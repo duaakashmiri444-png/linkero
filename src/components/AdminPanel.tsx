@@ -1,216 +1,345 @@
-import React, { useState, useEffect } from 'react';
-import { Video, DigitalPack, Transaction, ContentReport, SEOSettings } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
 import { store } from '../services/store';
-import { 
-  BarChart3, 
-  Film, 
-  Package, 
-  Coins, 
-  Flag, 
-  Globe, 
-  Plus, 
-  Trash2, 
-  Edit3, 
-  CheckCircle, 
-  Download,
-  AlertCircle
+import { DELIVERY_PLATFORMS, formatDuration, humanBytes } from '../services/mappers';
+import type { MediaAsset, PlatformSettingRow, TopupRow } from '../services/api';
+import type { DigitalPack, Video } from '../types';
+import {
+  BarChart3,
+  Film,
+  Package,
+  Coins,
+  FolderOpen,
+  Settings2,
+  Plus,
+  Trash2,
+  CheckCircle,
+  XCircle,
+  UploadCloud,
+  AlertCircle,
+  Clock,
+  ExternalLink,
+  Image as PhotoIcon
 } from 'lucide-react';
 
 interface AdminPanelProps {
   onToast: (msg: string) => void;
 }
 
+type PanelTab = 'dashboard' | 'videos' | 'packs' | 'topups' | 'files' | 'settings';
+
+const DURATIONS = [
+  { value: 'LIFETIME', label: 'Lifetime access' },
+  { value: '90_DAYS', label: '90 days' },
+  { value: '30_DAYS', label: '30 days' },
+  { value: '7_DAYS', label: '7 days' },
+  { value: '24_HOURS', label: '24 hours' }
+];
+
+/** Reads the real runtime out of the chosen file instead of asking the admin to type it. */
+function probeVideoDuration(file: File): Promise<number> {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const el = document.createElement('video');
+    let settled = false;
+    const finish = (seconds: number) => {
+      if (settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      resolve(seconds);
+    };
+    // Recorded WebM reports Infinity until the browser has scanned the whole file, so keep
+    // listening on durationchange instead of trusting the first metadata event.
+    const read = () => {
+      const raw = Number(el.duration);
+      if (Number.isFinite(raw) && raw > 0) finish(Math.floor(raw));
+    };
+    el.preload = 'metadata';
+    el.onloadedmetadata = read;
+    el.ondurationchange = read;
+    el.onerror = () => finish(0);
+    el.src = url;
+    // A runtime that never resolves must still let the admin publish, as "runtime unknown".
+    setTimeout(() => finish(0), 4000);
+  });
+}
+
+const EMPTY_VIDEO_FORM = {
+  title: '',
+  description: '',
+  category: '',
+  price: 4,
+  status: 'PUBLISHED',
+  access_duration_type: 'LIFETIME',
+  tags: ''
+};
+
+const EMPTY_PACK_FORM = {
+  title: '',
+  description: '',
+  category: '',
+  price: 60,
+  status: 'PUBLISHED',
+  access_duration_type: '30_DAYS'
+};
+
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
-  const [activeTab, setActiveTab] = useState<'kpis' | 'videos' | 'packs' | 'finance' | 'reports' | 'seo'>('kpis');
-  const [videos, setVideos] = useState<Video[]>(store.getVideos());
-  const [packs, setPacks] = useState<DigitalPack[]>(store.getPacks());
-  const [transactions, setTransactions] = useState<Transaction[]>(store.getTransactions());
-  const [reports, setReports] = useState<ContentReport[]>(store.getReports());
-  const [seo, setSeo] = useState<SEOSettings>(store.getSEO());
+  const [activeTab, setActiveTab] = useState<PanelTab>('dashboard');
+  const [videos, setVideos] = useState<Video[]>(() => store.getVideos());
+  const [packs, setPacks] = useState<DigitalPack[]>(() => store.getPacks());
+  const [topups, setTopups] = useState<TopupRow[]>([]);
+  const [uploads, setUploads] = useState<MediaAsset[]>(() => store.getUploads());
+  const [stats, setStats] = useState<Record<string, number | string>>(() => store.getAdminStats());
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  // Video Form Modal state
+  const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
+  const [newCategory, setNewCategory] = useState('');
+
   const [showVideoModal, setShowVideoModal] = useState(false);
-  const [videoForm, setVideoForm] = useState({
-    title: '',
-    description: '',
-    category: 'Pakistani' as Video['category'],
-    duration: '15:00',
-    durationSeconds: 900,
-    isFree: false,
-    creditPrice: 4,
-    previewTrimSeconds: 20,
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-    tags: 'Featured, Creator, 4K',
-    creatorName: 'Desi Ero Creator',
-    creatorHandle: '@creator'
-  });
+  const [videoForm, setVideoForm] = useState(EMPTY_VIDEO_FORM);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [posterFile, setPosterFile] = useState<File | null>(null);
 
-  // Pack Form Modal state
   const [showPackModal, setShowPackModal] = useState(false);
-  const [packForm, setPackForm] = useState({
-    title: '',
-    description: '',
-    platform: 'MEGA' as DigitalPack['platform'],
-    category: 'Trending ABACS' as DigitalPack['category'],
-    fileSize: '4.5 GB',
-    creditPrice: 60,
-    itemCount: 20,
-    includedItemsText: '1080p Master Files\nPhoto Archives\nDirect decrypt key',
-    accessUrl: 'https://mega.nz/folder/SAMPLE_PACK_TOKEN',
-    masterDemoVideoId: ''
-  });
+  const [packForm, setPackForm] = useState(EMPTY_PACK_FORM);
+  const [packFiles, setPackFiles] = useState<File[]>([]);
+  const [packVideos, setPackVideos] = useState<{ file: File; durationSeconds: number }[]>([]);
+  const [packPhotos, setPackPhotos] = useState<File[]>([]);
+  const [packDemoVideo, setPackDemoVideo] = useState<File | null>(null);
+  const [packDemoDuration, setPackDemoDuration] = useState(0);
+  const [packLinks, setPackLinks] = useState<{ provider: string; url: string }[]>([]);
+
+  const [previewTarget, setPreviewTarget] = useState<{ productId: number; title: string; hasPreview: boolean } | null>(null);
+  const [previewMode, setPreviewMode] = useState<'trim' | 'upload' | 'none'>('trim');
+  const [previewSeconds, setPreviewSeconds] = useState('');
+  const [previewStart, setPreviewStart] = useState('');
+  const [previewClipFile, setPreviewClipFile] = useState<File | null>(null);
+
+  const [topupFilter, setTopupFilter] = useState<'PENDING' | 'APPROVED' | 'REJECTED' | ''>('PENDING');
+  const [settingsRows, setSettingsRows] = useState<PlatformSettingRow[]>([]);
+  const [settingsDraft, setSettingsDraft] = useState<Record<string, string>>({});
+
+  const videoInputRef = useRef<HTMLInputElement>(null);
+  const previewInputRef = useRef<HTMLInputElement>(null);
+  const posterInputRef = useRef<HTMLInputElement>(null);
+  const packInputRef = useRef<HTMLInputElement>(null);
+  const packVideoInputRef = useRef<HTMLInputElement>(null);
+  const packPhotoInputRef = useRef<HTMLInputElement>(null);
+  const packDemoInputRef = useRef<HTMLInputElement>(null);
+  const libraryUploadRef = useRef<HTMLInputElement>(null);
+  const previewClipInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    void store.loadAdmin();
+    void store.loadCategories().then(rows => setCategories(rows.map(r => ({ id: r.id, name: r.name }))));
     return store.subscribe(() => {
       setVideos(store.getVideos());
       setPacks(store.getPacks());
-      setTransactions(store.getTransactions());
-      setReports(store.getReports());
-      setSeo(store.getSEO());
+      setUploads(store.getUploads());
+      setStats(store.getAdminStats());
+      setStatus(store.getStatusMessage());
+      setTopups(store.getPendingTopups());
     });
   }, []);
 
-  // Financial metrics
-  const totalPurchases = transactions.filter(t => t.type === 'video_unlock' || t.type === 'pack_unlock');
-  const creditsSpent = Math.abs(totalPurchases.reduce((acc, t) => acc + t.amount, 0));
-  const totalDeposits = transactions.filter(t => t.type === 'deposit').reduce((acc, t) => acc + t.amount, 0);
+  useEffect(() => {
+    if (activeTab !== 'topups') return;
+    void store.loadTopups(topupFilter || undefined);
+  }, [activeTab, topupFilter]);
 
-  // Conversion rate metric (purchases / total views approximated)
-  const totalViews = videos.reduce((acc, v) => acc + v.views, 0);
-  const conversionRate = totalViews > 0 ? ((totalPurchases.length / totalViews) * 100).toFixed(2) : '0.00';
-
-  // Handle Add Video
-  const handleAddVideo = (e: React.FormEvent) => {
-    e.preventDefault();
-    store.addVideo({
-      title: videoForm.title,
-      description: videoForm.description,
-      category: videoForm.category,
-      duration: videoForm.duration,
-      durationSeconds: videoForm.durationSeconds,
-      isFree: videoForm.isFree,
-      creditPrice: videoForm.isFree ? 0 : Number(videoForm.creditPrice),
-      previewTrimSeconds: Number(videoForm.previewTrimSeconds),
-      videoUrl: videoForm.videoUrl,
-      tags: videoForm.tags.split(',').map(t => t.trim()),
-      creator: {
-        name: videoForm.creatorName,
-        handle: videoForm.creatorHandle,
-        avatar: videoForm.creatorName.slice(0, 2).toUpperCase(),
-        verified: true
-      },
-      thumbnail: '',
-      backdrop: ''
+  useEffect(() => {
+    if (activeTab !== 'settings' || settingsRows.length) return;
+    void store.loadPlatformSettings().then(rows => {
+      setSettingsRows(rows);
+      setSettingsDraft(Object.fromEntries(rows.map(r => [r.key, r.value])));
     });
+  }, [activeTab, settingsRows.length]);
+
+  const isSuper = store.isSuperAdmin();
+  const pendingTopups = topups.filter(t => t.status === 'PENDING');
+  const storageBytes = uploads.reduce((sum, a) => sum + Number(a.size_bytes || 0), 0);
+  const packBytesTotal = packFiles.reduce((sum, f) => sum + f.size, 0);
+  const filledPackLinks = packLinks.filter(l => l.url.trim()).length;
+  const packVideoSeconds = packVideos.reduce((sum, v) => sum + v.durationSeconds, 0);
+  const packAssetBytes =
+    packBytesTotal +
+    packVideos.reduce((sum, v) => sum + v.file.size, 0) +
+    packPhotos.reduce((sum, f) => sum + f.size, 0) +
+    (packDemoVideo?.size ?? 0);
+
+  // --- VIDEO AUTHORING ---
+  const resetVideoModal = () => {
     setShowVideoModal(false);
-    onToast(`Video "${videoForm.title}" published to catalog!`);
+    setVideoForm(EMPTY_VIDEO_FORM);
+    setVideoFile(null);
+    setPreviewFile(null);
+    setPosterFile(null);
+    setVideoDuration(0);
   };
 
-  // Handle Add Pack
-  const handleAddPack = (e: React.FormEvent) => {
+  const handleVideoFile = async (file: File | null) => {
+    setVideoFile(file);
+    setVideoDuration(file ? await probeVideoDuration(file) : 0);
+  };
+
+  const submitVideo = async (e: React.FormEvent) => {
     e.preventDefault();
-    store.addPack({
-      title: packForm.title,
-      description: packForm.description,
-      platform: packForm.platform,
-      category: packForm.category,
-      fileSize: packForm.fileSize,
-      creditPrice: Number(packForm.creditPrice),
-      itemCount: Number(packForm.itemCount),
-      includedItems: packForm.includedItemsText.split('\n').filter(i => i.trim()),
-      accessUrl: packForm.accessUrl,
-      masterDemoVideoId: packForm.masterDemoVideoId || undefined,
-      coverImage: ''
+    setBusy(true);
+    const result = await store.publishVideo({
+      ...videoForm,
+      category: videoForm.category || categories[0]?.name || 'Videos',
+      price: Number(videoForm.price) || 0,
+      videoFile,
+      videoDurationSeconds: videoDuration,
+      previewFile,
+      posterFile
     });
+    setBusy(false);
+    onToast(result.message);
+    if (result.success) resetVideoModal();
+  };
+
+  // --- PACK AUTHORING ---
+  const resetPackModal = () => {
     setShowPackModal(false);
-    onToast(`Digital Pack "${packForm.title}" published to marketplace!`);
+    setPackForm(EMPTY_PACK_FORM);
+    setPackFiles([]);
+    setPackVideos([]);
+    setPackPhotos([]);
+    setPackDemoVideo(null);
+    setPackDemoDuration(0);
+    setPackLinks([]);
   };
 
-  // Generate XML Sitemap string
-  const generateSitemapXml = () => {
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>${seo.canonicalUrl}</loc>
-    <changefreq>daily</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>${seo.canonicalUrl}/#videos</loc>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>${seo.canonicalUrl}/#demo</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>${seo.canonicalUrl}/#marketplace</loc>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>
-  ${videos.map(v => `
-  <url>
-    <loc>${seo.canonicalUrl}/video/${v.id}</loc>
-    <lastmod>${v.publishedAt}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>`).join('')}
-  ${packs.map(p => `
-  <url>
-    <loc>${seo.canonicalUrl}/pack/${p.id}</loc>
-    <lastmod>${p.publishedAt}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>`).join('')}
-</urlset>`;
+  const addPackVideos = async (files: File[]) => {
+    if (!files.length) return;
+    const probed = await Promise.all(
+      files.map(async file => ({ file, durationSeconds: await probeVideoDuration(file) }))
+    );
+    setPackVideos(prev => [...prev, ...probed]);
   };
 
-  const handleDownloadSitemap = () => {
-    const xml = generateSitemapXml();
-    const blob = new Blob([xml], { type: 'application/xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'sitemap.xml';
-    a.click();
-    URL.revokeObjectURL(url);
-    onToast('sitemap.xml downloaded successfully!');
+  const submitPack = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    const result = await store.publishPack({
+      ...packForm,
+      category: packForm.category || categories[0]?.name || 'Digital Resources',
+      price: Number(packForm.price) || 0,
+      files: packFiles,
+      videoFiles: packVideos,
+      photoFiles: packPhotos,
+      demoVideoFile: packDemoVideo,
+      links: packLinks
+        .filter(l => l.url.trim())
+        .map(l => ({
+          provider: l.provider,
+          url: l.url.trim(),
+          label: DELIVERY_PLATFORMS.find(p => p.provider === l.provider)?.name ?? l.provider,
+        })),
+    });
+    setBusy(false);
+    onToast(result.message);
+    if (result.success) resetPackModal();
   };
+
+  const editPrice = async (itemId: string, current: number, title: string) => {
+    const answer = window.prompt(`New credit price for “${title}” (0 = free):`, String(current));
+    if (answer === null) return;
+    const result = await store.setPrice(itemId, Number(answer));
+    onToast(result.message);
+  };
+
+  const removeProduct = async (productId: number, title: string) => {
+    if (!window.confirm(`Remove “${title}” from the catalogue? Existing buyers keep their access.`)) return;
+    const result = await store.deleteProduct(productId);
+    onToast(result.message);
+  };
+
+  const openPreviewDialog = (item: { productId: number; title: string; preview?: string }) => {
+    setPreviewTarget({ productId: item.productId, title: item.title, hasPreview: !!item.preview });
+    setPreviewMode('trim');
+    setPreviewSeconds('');
+    setPreviewStart('');
+    setPreviewClipFile(null);
+  };
+
+  const runPreviewAction = async () => {
+    if (!previewTarget) return;
+    setBusy(true);
+    const result = await store.generatePreview({
+      productId: previewTarget.productId,
+      mode: previewMode,
+      durationSeconds: previewSeconds.trim() ? Number(previewSeconds) : undefined,
+      startSeconds: previewStart.trim() ? Number(previewStart) : undefined,
+      file: previewMode === 'upload' ? previewClipFile : null
+    });
+    setBusy(false);
+    onToast(result.message);
+    if (result.success) setPreviewTarget(null);
+  };
+
+  const reviewTopup = async (topup: TopupRow, approve: boolean) => {
+    const reason = approve
+      ? undefined
+      : window.prompt(`Reject top-up #${topup.id} (${topup.amount_credits} credits)? Give the buyer a reason:`, 'Payment not found in our account');
+    if (!approve && reason === null) return;
+    setBusy(true);
+    const result = approve ? await store.approveTopup(topup.id) : await store.rejectTopup(topup.id, reason ?? undefined);
+    setBusy(false);
+    onToast(result.message);
+  };
+
+  const saveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    const result = await store.savePlatformSettings(settingsDraft);
+    setBusy(false);
+    onToast(result.message);
+  };
+
+  const addCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCategory.trim()) return;
+    const result = await store.createCategory(newCategory.trim());
+    onToast(result.message);
+    if (result.success) {
+      setNewCategory('');
+      setCategories((await store.loadCategories()).map(r => ({ id: r.id, name: r.name })));
+    }
+  };
+
+  const tabs: { id: PanelTab; label: string; icon: typeof Film; badge?: number }[] = [
+    { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+    { id: 'videos', label: `Videos (${videos.length})`, icon: Film },
+    { id: 'packs', label: `Packs (${packs.length})`, icon: Package },
+    { id: 'topups', label: `Top-ups (${pendingTopups.length})`, icon: Coins },
+    { id: 'files', label: `Files (${uploads.length})`, icon: FolderOpen },
+    { id: 'settings', label: 'Platform Settings', icon: Settings2 }
+  ];
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
-      
-      {/* Admin Title */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-6">
         <div>
           <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded uppercase tracking-wider">
-            ADMINISTRATIVE PORTAL
+            {store.getUser().role === 'SUPER_ADMIN' ? 'OWNER PORTAL' : 'STAFF PORTAL'}
           </span>
-          <h1 className="font-display font-black text-3xl sm:text-4xl text-white tracking-tight mt-1">
-            Control Panel & Management
-          </h1>
+          <h1 className="font-display font-black text-3xl sm:text-4xl text-white tracking-tight mt-1">Control Panel</h1>
           <p className="text-slate-400 text-xs sm:text-sm mt-1">
-            Catalog authoring, pricing configurations, financial ledgers, moderation, and SEO controls.
+            Everything here writes to the live database — uploads are stored on the server and served from /uploads.
           </p>
         </div>
 
-        {/* Admin Navigation Tabs */}
         <div className="flex flex-wrap gap-1 bg-[#121422] p-1 rounded-2xl border border-white/10 text-xs">
-          {[
-            { id: 'kpis', label: 'Dashboard', icon: BarChart3 },
-            { id: 'videos', label: `Videos (${videos.length})`, icon: Film },
-            { id: 'packs', label: `Packs (${packs.length})`, icon: Package },
-            { id: 'finance', label: 'Financial Ledger', icon: Coins },
-            { id: 'reports', label: `Reports (${reports.filter(r => r.status === 'pending').length})`, icon: Flag },
-            { id: 'seo', label: 'SEO Management', icon: Globe }
-          ].map(tab => {
+          {tabs.map(tab => {
             const Icon = tab.icon;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id)}
                 className={`px-3 py-1.5 rounded-xl font-semibold transition-all flex items-center gap-1.5 ${activeTab === tab.id ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
               >
                 <Icon className="w-3.5 h-3.5" />
@@ -221,76 +350,84 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
         </div>
       </div>
 
-      {/* TAB 1: DASHBOARD KPIS */}
-      {activeTab === 'kpis' && (
+      {status && (
+        <div className="text-xs text-purple-200 bg-purple-600/15 border border-purple-500/25 rounded-xl px-4 py-2.5 flex items-center gap-2">
+          <Clock className="w-3.5 h-3.5" />
+          {status}
+        </div>
+      )}
+
+      {/* DASHBOARD */}
+      {activeTab === 'dashboard' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="p-5 rounded-2xl bg-[#141626] border border-white/10">
-              <span className="text-xs font-semibold text-slate-400">Total Unlocks & Sales</span>
-              <div className="text-2xl font-black text-white mt-1 tabular-nums">
-                {totalPurchases.length}
+            {[
+              { label: 'Registered buyers', value: stats.total_users, hint: `${stats.active_users ?? 0} active` },
+              { label: 'Paid unlocks', value: stats.total_purchases, hint: `${stats.total_revenue_credits ?? 0} CR spent` },
+              { label: 'Published products', value: stats.published_products, hint: `${stats.total_products ?? 0} total rows` },
+              { label: 'Top-ups awaiting review', value: stats.pending_topups, hint: `${stats.expired_access_count ?? 0} expired access rows` }
+            ].map(card => (
+              <div key={card.label} className="p-5 rounded-2xl bg-[#141626] border border-white/10">
+                <span className="text-xs font-semibold text-slate-400">{card.label}</span>
+                <div className="text-2xl font-black text-white mt-1 tabular-nums">{card.value ?? 0}</div>
+                <span className="text-[11px] text-purple-400">{card.hint}</span>
               </div>
-              <span className="text-[11px] text-purple-400">Atomic server verified transactions</span>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-[#141626] border border-white/10">
-              <span className="text-xs font-semibold text-slate-400">Credits Spent / Revenue</span>
-              <div className="text-2xl font-black text-purple-300 mt-1 tabular-nums">
-                {creditsSpent} CR
-              </div>
-              <span className="text-[11px] text-slate-400">From {totalDeposits} CR deposited</span>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-[#141626] border border-white/10">
-              <span className="text-xs font-semibold text-slate-400">Published Content</span>
-              <div className="text-2xl font-black text-white mt-1 tabular-nums">
-                {videos.length + packs.length}
-              </div>
-              <span className="text-[11px] text-slate-400">{videos.length} videos · {packs.length} packs</span>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-[#141626] border border-white/10">
-              <span className="text-xs font-semibold text-slate-400">Pending Moderation Reports</span>
-              <div className="text-2xl font-black text-rose-400 mt-1 tabular-nums">
-                {reports.filter(r => r.status === 'pending').length}
-              </div>
-              <span className="text-[11px] text-slate-400">Broken links or flagged items</span>
-            </div>
+            ))}
           </div>
 
           <div className="p-6 rounded-2xl bg-[#141626] border border-white/10 space-y-4">
-            <h3 className="font-bold text-white text-base">Quick Content Authoring</h3>
+            <h3 className="font-bold text-white text-base">Publish new content</h3>
+            <p className="text-xs text-slate-400 max-w-2xl">
+              Both forms upload the actual file to the server. Videos stream from the inbuilt player at their
+              <span className="font-mono text-purple-300"> /uploads/videos/… </span>
+              URL; packs deliver the uploaded archives to paying buyers only.
+            </p>
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => setShowVideoModal(true)}
                 className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-colors"
               >
                 <Plus className="w-4 h-4" />
-                Publish New Video Listing
+                Publish video listing
               </button>
               <button
                 onClick={() => setShowPackModal(true)}
                 className="bg-pink-600 hover:bg-pink-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-colors"
               >
                 <Plus className="w-4 h-4" />
-                Publish Digital Archive Pack
+                Publish archive pack
               </button>
             </div>
           </div>
+
+          {pendingTopups.length > 0 && (
+            <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-amber-200">
+                <span className="font-bold">{pendingTopups.length} payment reference(s)</span> are waiting for verification.
+                Credits stay out of buyer wallets until you approve them.
+              </div>
+              <button
+                onClick={() => setActiveTab('topups')}
+                className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1.5 rounded-lg text-xs"
+              >
+                Open review queue
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {/* TAB 2: VIDEOS MANAGEMENT */}
+      {/* VIDEOS */}
       {activeTab === 'videos' && (
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="font-bold text-white text-base">Published Videos Catalog ({videos.length})</h3>
+          <div className="flex justify-between items-center gap-3 flex-wrap">
+            <h3 className="font-bold text-white text-base">Streamable catalogue ({videos.length})</h3>
             <button
               onClick={() => setShowVideoModal(true)}
               className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5"
             >
               <Plus className="w-3.5 h-3.5" />
-              Add Video
+              Add video
             </button>
           </div>
 
@@ -299,11 +436,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
               <table className="w-full text-left text-xs">
                 <thead className="bg-[#0b0c16] text-slate-400 border-b border-white/10 font-bold uppercase text-[10px]">
                   <tr>
-                    <th className="p-3">Video Title</th>
+                    <th className="p-3">Title</th>
                     <th className="p-3">Category</th>
-                    <th className="p-3">Duration</th>
-                    <th className="p-3">Pricing</th>
-                    <th className="p-3">Preview Trim</th>
+                    <th className="p-3">Runtime</th>
+                    <th className="p-3">Lessons</th>
+                    <th className="p-3">Price</th>
+                    <th className="p-3">Status</th>
                     <th className="p-3 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -312,7 +450,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                     <tr key={v.id} className="hover:bg-white/[0.02]">
                       <td className="p-3 font-semibold text-white max-w-xs truncate">{v.title}</td>
                       <td className="p-3 text-purple-300">{v.category}</td>
-                      <td className="p-3 font-mono">{v.duration}</td>
+                      <td className="p-3 font-mono">{v.durationSeconds > 0 ? v.duration : 'Player reads it'}</td>
+                      <td className="p-3 font-mono">{v.lessonCount}</td>
                       <td className="p-3">
                         {v.isFree ? (
                           <span className="text-emerald-400 font-bold">FREE</span>
@@ -320,35 +459,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                           <span className="text-purple-300 font-bold">{v.creditPrice} CR</span>
                         )}
                       </td>
-                      <td className="p-3 font-mono">{v.previewTrimSeconds}s</td>
-                      <td className="p-3 text-right space-x-2">
+                      <td className="p-3 text-[10px] font-bold uppercase text-slate-400">{v.status}</td>
+                      <td className="p-3 text-right space-x-2 whitespace-nowrap">
                         <button
-                          onClick={() => {
-                            const newPrice = prompt(`Update credit price for "${v.title}" (current: ${v.creditPrice}):`, String(v.creditPrice));
-                            if (newPrice !== null) {
-                              const num = Number(newPrice);
-                              store.updateVideo(v.id, { creditPrice: num, isFree: num === 0 });
-                              onToast(`Price updated for ${v.title}`);
-                            }
-                          }}
-                          className="text-purple-400 hover:text-purple-300 p-1 font-semibold"
+                          onClick={() => openPreviewDialog({ productId: v.productId, title: v.title, preview: v.previewUrl })}
+                          className="text-slate-400 hover:text-white p-1 font-semibold"
+                          title="Choose the clip buyers watch before paying"
                         >
-                          Edit Price
+                          Preview
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`Delete video "${v.title}"?`)) {
-                              store.deleteVideo(v.id);
-                              onToast('Video deleted');
-                            }
-                          }}
+                          onClick={() => void editPrice(v.id, v.creditPrice, v.title)}
+                          className="text-purple-400 hover:text-purple-300 p-1 font-semibold"
+                        >
+                          Price
+                        </button>
+                        <button
+                          onClick={() => void removeProduct(v.productId, v.title)}
                           className="text-rose-400 hover:text-rose-300 p-1"
+                          title="Remove from catalogue"
                         >
                           <Trash2 className="w-4 h-4 inline" />
                         </button>
                       </td>
                     </tr>
                   ))}
+                  {videos.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-6 text-center text-slate-500">
+                        No streamable products yet — publish one to see it here.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -356,17 +498,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
         </div>
       )}
 
-      {/* TAB 3: PACKS MANAGEMENT */}
+      {/* PACKS */}
       {activeTab === 'packs' && (
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="font-bold text-white text-base">Published Digital Packs ({packs.length})</h3>
+          <div className="flex justify-between items-center gap-3 flex-wrap">
+            <h3 className="font-bold text-white text-base">Marketplace packs ({packs.length})</h3>
             <button
               onClick={() => setShowPackModal(true)}
               className="bg-pink-600 hover:bg-pink-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5"
             >
               <Plus className="w-3.5 h-3.5" />
-              Add Digital Pack
+              Add pack
             </button>
           </div>
 
@@ -375,11 +517,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
               <table className="w-full text-left text-xs">
                 <thead className="bg-[#0b0c16] text-slate-400 border-b border-white/10 font-bold uppercase text-[10px]">
                   <tr>
-                    <th className="p-3">Pack Title</th>
-                    <th className="p-3">Platform</th>
-                    <th className="p-3">Size</th>
-                    <th className="p-3">Credit Price</th>
-                    <th className="p-3">Master Demo</th>
+                    <th className="p-3">Title</th>
+                    <th className="p-3">Category</th>
+                    <th className="p-3">Files</th>
+                    <th className="p-3">Price</th>
+                    <th className="p-3">Sales</th>
+                    <th className="p-3">Status</th>
                     <th className="p-3 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -387,88 +530,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                   {packs.map(p => (
                     <tr key={p.id} className="hover:bg-white/[0.02]">
                       <td className="p-3 font-semibold text-white max-w-xs truncate">{p.title}</td>
-                      <td className="p-3 text-purple-300">{p.platform}</td>
-                      <td className="p-3 font-mono">{p.fileSize}</td>
-                      <td className="p-3 font-bold text-purple-300">{p.creditPrice} CR</td>
-                      <td className="p-3">
-                        {p.masterDemoVideoId ? (
-                          <span className="text-pink-400 font-semibold">✓ Connected</span>
-                        ) : (
-                          <span className="text-slate-500">—</span>
-                        )}
+                      <td className="p-3 text-purple-300">{p.category}</td>
+                      <td className="p-3 font-mono">
+                        {p.fileCount} file{p.fileCount === 1 ? '' : 's'}
+                        {p.totalBytes > 0 && <span className="text-slate-500"> · {humanBytes(p.totalBytes)}</span>}
                       </td>
-                      <td className="p-3 text-right space-x-2">
+                      <td className="p-3 font-bold text-purple-300">{p.creditPrice} CR</td>
+                      <td className="p-3 font-mono">{p.salesCount}</td>
+                      <td className="p-3 text-[10px] font-bold uppercase text-slate-400">{p.status}</td>
+                      <td className="p-3 text-right space-x-2 whitespace-nowrap">
                         <button
-                          onClick={() => {
-                            const newPrice = prompt(`Update price for "${p.title}" (current: ${p.creditPrice}):`, String(p.creditPrice));
-                            if (newPrice !== null) {
-                              store.updatePack(p.id, { creditPrice: Number(newPrice) });
-                              onToast(`Price updated for ${p.title}`);
-                            }
-                          }}
-                          className="text-purple-400 hover:text-purple-300 p-1 font-semibold"
+                          onClick={() => openPreviewDialog({ productId: p.productId, title: p.title, preview: p.demoUrl })}
+                          className="text-slate-400 hover:text-white p-1 font-semibold"
+                          title="Choose the clip buyers watch before paying"
                         >
-                          Edit Price
+                          Preview
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`Delete pack "${p.title}"?`)) {
-                              store.deletePack(p.id);
-                              onToast('Pack deleted');
-                            }
-                          }}
+                          onClick={() => void editPrice(p.id, p.creditPrice, p.title)}
+                          className="text-purple-400 hover:text-purple-300 p-1 font-semibold"
+                        >
+                          Price
+                        </button>
+                        <button
+                          onClick={() => void removeProduct(p.productId, p.title)}
                           className="text-rose-400 hover:text-rose-300 p-1"
+                          title="Remove from catalogue"
                         >
                           <Trash2 className="w-4 h-4 inline" />
                         </button>
                       </td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 4: FINANCIAL AUDIT LEDGER */}
-      {activeTab === 'finance' && (
-        <div className="space-y-4">
-          <h3 className="font-bold text-white text-base">Complete Audit Ledger</h3>
-          <div className="rounded-2xl border border-white/10 bg-[#121422] overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#0b0c16] text-slate-400 border-b border-white/10 font-bold uppercase text-[10px]">
-                  <tr>
-                    <th className="p-3">Reference</th>
-                    <th className="p-3">Type</th>
-                    <th className="p-3">Item / Description</th>
-                    <th className="p-3">Amount</th>
-                    <th className="p-3">Balance After</th>
-                    <th className="p-3">Date</th>
-                    <th className="p-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5 text-slate-300">
-                  {transactions.map(txn => (
-                    <tr key={txn.id} className="hover:bg-white/[0.02]">
-                      <td className="p-3 font-mono text-purple-300">{txn.reference}</td>
-                      <td className="p-3 capitalize">{txn.type.replace('_', ' ')}</td>
-                      <td className="p-3 font-semibold text-white max-w-xs truncate">
-                        {txn.itemTitle || (txn.type === 'deposit' ? 'Wallet Deposit' : 'Promo')}
-                      </td>
-                      <td className={`p-3 font-bold tabular-nums ${txn.amount > 0 ? 'text-emerald-400' : 'text-slate-200'}`}>
-                        {txn.amount > 0 ? `+${txn.amount}` : txn.amount} CR
-                      </td>
-                      <td className="p-3 font-mono tabular-nums">{txn.balanceAfter} CR</td>
-                      <td className="p-3 text-slate-400">{new Date(txn.createdAt).toLocaleDateString()}</td>
-                      <td className="p-3">
-                        <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded uppercase">
-                          {txn.status}
-                        </span>
+                  {packs.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-6 text-center text-slate-500">
+                        No packs published yet.
                       </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
@@ -476,43 +576,86 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
         </div>
       )}
 
-      {/* TAB 5: REPORTS & MODERATION */}
-      {activeTab === 'reports' && (
+      {/* TOP-UPS */}
+      {activeTab === 'topups' && (
         <div className="space-y-4">
-          <h3 className="font-bold text-white text-base">Content & Broken Link Reports ({reports.length})</h3>
-          {reports.length === 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-bold text-white text-base">Payment verification queue</h3>
+            <div className="flex gap-1 text-[11px] bg-black/40 p-0.5 rounded-lg border border-white/10">
+              {(['PENDING', 'APPROVED', 'REJECTED', ''] as const).map(f => (
+                <button
+                  key={f || 'all'}
+                  onClick={() => setTopupFilter(f)}
+                  className={`px-2.5 py-1 rounded-md font-semibold capitalize ${topupFilter === f ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {f || 'all'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {!isSuper && (
+            <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/25 rounded-xl px-4 py-2.5 flex items-center gap-2">
+              <AlertCircle className="w-3.5 h-3.5" />
+              Staff accounts can review references, but only the owner account can credit a wallet.
+            </div>
+          )}
+
+          {topups.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-500 bg-[#141626] rounded-2xl border border-white/10">
-              No reports submitted yet. Everything running smoothly!
+              Nothing in this queue.
             </div>
           ) : (
             <div className="space-y-3">
-              {reports.map(rep => (
-                <div key={rep.id} className="p-4 rounded-xl bg-[#141626] border border-white/10 flex items-start justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-bold text-rose-400 uppercase">
-                        [{rep.reason.replace('_', ' ')}]
+              {topups.map(t => (
+                <div key={t.id} className="p-4 rounded-xl bg-[#141626] border border-white/10 flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-xs font-bold text-white">@{t.username ?? `user ${t.user_id}`}</span>
+                      <span className="text-[10px] text-slate-500">{t.email}</span>
+                      <span
+                        className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded ${
+                          t.status === 'PENDING'
+                            ? 'bg-amber-500/15 text-amber-300'
+                            : t.status === 'APPROVED'
+                            ? 'bg-emerald-500/15 text-emerald-300'
+                            : 'bg-rose-500/15 text-rose-300'
+                        }`}
+                      >
+                        {t.status}
                       </span>
-                      <span className="text-sm font-semibold text-white">{rep.targetTitle}</span>
                     </div>
-                    <p className="text-xs text-slate-300">{rep.details}</p>
-                    <div className="text-[10px] text-slate-500 mt-1">
-                      Logged {new Date(rep.createdAt).toLocaleString()} · Status: {rep.status}
-                    </div>
+                    <p className="text-xs text-slate-300">
+                      {t.amount_credits} credits for {t.amount_fiat} {t.currency} via {t.method}
+                    </p>
+                    <p className="text-[11px] text-slate-400 font-mono mt-1">Ref: {t.reference_id}</p>
+                    {t.sender_info && <p className="text-[11px] text-slate-400">Sender: {t.sender_info}</p>}
+                    <p className="text-[10px] text-slate-500 mt-1">Submitted {new Date(t.created_at).toLocaleString()}</p>
                   </div>
 
-                  {rep.status === 'pending' ? (
-                    <button
-                      onClick={() => {
-                        store.resolveReport(rep.id);
-                        onToast('Report marked as reviewed and resolved.');
-                      }}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs shrink-0 transition-colors"
-                    >
-                      Resolve
-                    </button>
+                  {t.status === 'PENDING' ? (
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        disabled={busy || !isSuper}
+                        onClick={() => void reviewTopup(t, true)}
+                        className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        Approve
+                      </button>
+                      <button
+                        disabled={busy || !isSuper}
+                        onClick={() => void reviewTopup(t, false)}
+                        className="bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        Reject
+                      </button>
+                    </div>
                   ) : (
-                    <span className="text-emerald-400 text-xs font-bold shrink-0">✓ Resolved</span>
+                    <span className="text-[10px] text-slate-500">
+                      {t.reviewed_at ? `Reviewed ${new Date(t.reviewed_at).toLocaleString()}` : 'Settled'}
+                    </span>
                   )}
                 </div>
               ))}
@@ -521,90 +664,218 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
         </div>
       )}
 
-      {/* TAB 6: SEO MANAGEMENT */}
-      {activeTab === 'seo' && (
-        <div className="space-y-6">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="font-bold text-white text-base">SEO & Social Meta Configuration</h3>
-              <p className="text-xs text-slate-400">Controls search engine snippets, OpenGraph previews, and XML sitemaps.</p>
-            </div>
+      {/* FILES */}
+      {activeTab === 'files' && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-bold text-white text-base">
+              Server media library ({uploads.length} files · {humanBytes(storageBytes)})
+            </h3>
             <button
-              onClick={handleDownloadSitemap}
-              className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-colors"
+              onClick={() => libraryUploadRef.current?.click()}
+              className="bg-white/10 hover:bg-white/15 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5"
             >
-              <Download className="w-3.5 h-3.5" />
-              Download sitemap.xml
+              <UploadCloud className="w-3.5 h-3.5" />
+              Upload a file
             </button>
+            <input
+              ref={libraryUploadRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={async e => {
+                const chosen = Array.from(e.target.files ?? []);
+                for (const file of chosen) {
+                  const isArchive = /\.(zip|rar|7z|tar|gz)$/i.test(file.name);
+                  await store.uploadFile(file, /\.(png|jpe?g|webp|gif)$/i.test(file.name) ? 'IMAGE' : isArchive ? 'ARCHIVE' : 'OTHER', null);
+                }
+                e.target.value = '';
+                if (chosen.length) onToast(`${chosen.length} file(s) uploaded to the server.`);
+              }}
+            />
           </div>
 
-          <form
-            onSubmit={e => {
-              e.preventDefault();
-              store.updateSEO(seo);
-              onToast('SEO settings updated and saved!');
-            }}
-            className="p-6 rounded-2xl bg-[#141626] border border-white/10 space-y-4 max-w-2xl"
-          >
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-1">Page Title (&lt;title&gt; and og:title)</label>
-              <input
-                type="text"
-                value={seo.metaTitle}
-                onChange={e => setSeo({ ...seo, metaTitle: e.target.value })}
-                className="w-full bg-black/40 border border-white/15 rounded-xl p-2.5 text-xs text-white"
-              />
+          <div className="rounded-2xl border border-white/10 bg-[#121422] overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-[#0b0c16] text-slate-400 border-b border-white/10 font-bold uppercase text-[10px]">
+                  <tr>
+                    <th className="p-3">File</th>
+                    <th className="p-3">Kind</th>
+                    <th className="p-3">Size</th>
+                    <th className="p-3">Attached to</th>
+                    <th className="p-3">Uploaded</th>
+                    <th className="p-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5 text-slate-300">
+                  {uploads.map(a => (
+                    <tr key={a.id} className="hover:bg-white/[0.02]">
+                      <td className="p-3 font-semibold text-white max-w-xs truncate">
+                        <a href={a.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 hover:text-purple-300">
+                          {a.file_name}
+                          <ExternalLink className="w-3 h-3 shrink-0 text-slate-500" />
+                        </a>
+                      </td>
+                      <td className="p-3 font-mono text-[10px] uppercase">{a.kind}</td>
+                      <td className="p-3 font-mono">{humanBytes(a.size_bytes)}</td>
+                      <td className="p-3 text-slate-400">{a.product_title ?? (a.product_id ? `product #${a.product_id}` : 'unattached')}</td>
+                      <td className="p-3 text-slate-400">{new Date(a.created_at ?? '').toLocaleDateString()}</td>
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`Delete ${a.file_name} from disk? Products referencing it will break.`)) return;
+                            const result = await store.deleteUpload(a.id);
+                            onToast(result.message);
+                          }}
+                          className="text-rose-400 hover:text-rose-300 p-1"
+                        >
+                          <Trash2 className="w-4 h-4 inline" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {uploads.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-slate-500">
+                        Nothing uploaded to the server yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-1">Meta Description (og:description)</label>
-              <textarea
-                rows={3}
-                value={seo.metaDescription}
-                onChange={e => setSeo({ ...seo, metaDescription: e.target.value })}
-                className="w-full bg-black/40 border border-white/15 rounded-xl p-2.5 text-xs text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-1">Canonical URL</label>
-              <input
-                type="text"
-                value={seo.canonicalUrl}
-                onChange={e => setSeo({ ...seo, canonicalUrl: e.target.value })}
-                className="w-full bg-black/40 border border-white/15 rounded-xl p-2.5 text-xs text-white"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="robotsIndex"
-                checked={seo.robotsIndex}
-                onChange={e => setSeo({ ...seo, robotsIndex: e.target.checked })}
-                className="w-4 h-4 accent-purple-600 rounded"
-              />
-              <label htmlFor="robotsIndex" className="text-xs text-white">
-                Allow Search Engines to Index Public Catalog (index, follow)
-              </label>
-            </div>
-
-            <button
-              type="submit"
-              className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-2.5 rounded-xl text-xs transition-colors"
-            >
-              Save SEO Settings
-            </button>
-          </form>
+          </div>
         </div>
       )}
 
-      {/* CREATE VIDEO MODAL */}
+      {/* SETTINGS */}
+      {activeTab === 'settings' && (
+        <div className="space-y-6">
+          <div>
+            <h3 className="font-bold text-white text-base">Platform settings</h3>
+            <p className="text-xs text-slate-400">
+              These values feed the support links, top-up notice and storefront copy. Leave a field empty to hide that
+              channel from customers.
+            </p>
+          </div>
+
+          <form onSubmit={saveSettings} className="p-6 rounded-2xl bg-[#141626] border border-white/10 space-y-4 max-w-2xl">
+            {settingsRows.map(row => (
+              <div key={row.key}>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">{row.label ?? row.key}</label>
+                <input
+                  type="text"
+                  value={settingsDraft[row.key] ?? ''}
+                  onChange={e => setSettingsDraft(prev => ({ ...prev, [row.key]: e.target.value }))}
+                  className="w-full bg-black/40 border border-white/15 rounded-xl p-2.5 text-xs text-white"
+                />
+                {row.description && <p className="text-[10px] text-slate-500 mt-1">{row.description}</p>}
+              </div>
+            ))}
+            <button
+              type="submit"
+              disabled={busy || settingsRows.length === 0}
+              className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold px-6 py-2.5 rounded-xl text-xs transition-colors"
+            >
+              Save settings
+            </button>
+          </form>
+
+          <div className="p-6 rounded-2xl bg-[#141626] border border-white/10 space-y-3 max-w-2xl">
+            <h4 className="font-bold text-white text-sm">Catalogue categories</h4>
+            <div className="flex flex-wrap gap-1.5">
+              {categories.map(c => (
+                <span key={c.id} className="text-[11px] px-2.5 py-1 rounded-full bg-black/40 border border-white/10 text-slate-300">
+                  {c.name}
+                </span>
+              ))}
+            </div>
+            <form onSubmit={addCategory} className="flex gap-2">
+              <input
+                type="text"
+                value={newCategory}
+                onChange={e => setNewCategory(e.target.value)}
+                placeholder="New category name"
+                className="flex-1 bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600"
+              />
+              <button type="submit" className="bg-white/10 hover:bg-white/15 text-white font-bold px-4 py-2 rounded-xl text-xs">
+                Add
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* VIDEO MODAL */}
       {showVideoModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-[#121424] border border-white/15 rounded-3xl p-6 w-full max-w-lg space-y-4">
-            <h3 className="font-bold text-white text-base">Add New Video to Catalog</h3>
-            <form onSubmit={handleAddVideo} className="space-y-3 text-xs">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#121424] border border-white/15 rounded-3xl p-6 w-full max-w-xl space-y-4 my-auto">
+            <h3 className="font-bold text-white text-base">Publish a video listing</h3>
+            <form onSubmit={submitVideo} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-400 mb-1">Video file on your device *</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => videoInputRef.current?.click()}
+                    className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-3 py-2 rounded-xl flex items-center gap-1.5"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    Choose video
+                  </button>
+                  <span className="text-slate-400">
+                    {videoFile ? `${videoFile.name} · ${humanBytes(videoFile.size)}` : 'mp4, webm or mov'}
+                  </span>
+                </div>
+                <input
+                  ref={videoInputRef}
+                  type="file"
+                  accept="video/*"
+                  className="hidden"
+                  onChange={e => void handleVideoFile(e.target.files?.[0] ?? null)}
+                />
+                {videoDuration > 0 && (
+                  <p className="text-[10px] text-emerald-400 mt-1">
+                    Runtime read from the file: {formatDuration(videoDuration)}
+                  </p>
+                )}
+                <div className="flex items-center gap-2 flex-wrap mt-2">
+                  <button
+                    type="button"
+                    onClick={() => previewInputRef.current?.click()}
+                    className="bg-white/10 hover:bg-white/15 text-white px-3 py-1.5 rounded-xl flex items-center gap-1.5"
+                  >
+                    Free preview clip
+                  </button>
+                  <span className="text-slate-500">{previewFile ? previewFile.name : 'optional — teaser for non-buyers'}</span>
+                  <input
+                    ref={previewInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={e => setPreviewFile(e.target.files?.[0] ?? null)}
+                  />
+                </div>
+                <div className="flex items-center gap-2 flex-wrap mt-2">
+                  <button
+                    type="button"
+                    onClick={() => posterInputRef.current?.click()}
+                    className="bg-white/10 hover:bg-white/15 text-white px-3 py-1.5 rounded-xl flex items-center gap-1.5"
+                  >
+                    Cover image
+                  </button>
+                  <span className="text-slate-500">{posterFile ? posterFile.name : 'optional poster'}</span>
+                  <input
+                    ref={posterInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={e => setPosterFile(e.target.files?.[0] ?? null)}
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-slate-400 mb-1">Title</label>
                 <input
@@ -622,7 +893,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                 <textarea
                   required
                   rows={2}
-                  placeholder="Short summary of the video content..."
                   value={videoForm.description}
                   onChange={e => setVideoForm({ ...videoForm, description: e.target.value })}
                   className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
@@ -633,80 +903,78 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                 <div>
                   <label className="block text-slate-400 mb-1">Category</label>
                   <select
-                    value={videoForm.category}
-                    onChange={e => setVideoForm({ ...videoForm, category: e.target.value as any })}
+                    value={videoForm.category || categories[0]?.name || ''}
+                    onChange={e => setVideoForm({ ...videoForm, category: e.target.value })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
                   >
-                    <option value="Pakistani">Pakistani</option>
-                    <option value="Indian">Indian</option>
-                    <option value="TikTok Creators">TikTok Creators</option>
-                    <option value="Models & Creators">Models & Creators</option>
-                    <option value="Trending ABACS">Trending ABACS</option>
-                    <option value="Master Demos">Master Demos</option>
-                    <option value="Other">Other</option>
+                    {categories.map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
                   </select>
                 </div>
-
                 <div>
-                  <label className="block text-slate-400 mb-1">Duration String</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 18:40"
-                    value={videoForm.duration}
-                    onChange={e => setVideoForm({ ...videoForm, duration: e.target.value })}
+                  <label className="block text-slate-400 mb-1">Access window</label>
+                  <select
+                    value={videoForm.access_duration_type}
+                    onChange={e => setVideoForm({ ...videoForm, access_duration_type: e.target.value })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
-                  />
+                  >
+                    {DURATIONS.map(d => (
+                      <option key={d.value} value={d.value}>{d.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-slate-400 mb-1">Is Free?</label>
-                  <select
-                    value={videoForm.isFree ? 'yes' : 'no'}
-                    onChange={e => setVideoForm({ ...videoForm, isFree: e.target.value === 'yes' })}
-                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
-                  >
-                    <option value="no">Paid Video</option>
-                    <option value="yes">100% Free</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-400 mb-1">Credit Price</label>
+                  <label className="block text-slate-400 mb-1">Price (credits)</label>
                   <input
                     type="number"
-                    disabled={videoForm.isFree}
-                    value={videoForm.creditPrice}
-                    onChange={e => setVideoForm({ ...videoForm, creditPrice: Number(e.target.value) })}
+                    min="0"
+                    value={videoForm.price}
+                    onChange={e => setVideoForm({ ...videoForm, price: Number(e.target.value) })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
                   />
                 </div>
-
                 <div>
-                  <label className="block text-slate-400 mb-1">Preview Trim (s)</label>
+                  <label className="block text-slate-400 mb-1">Visibility</label>
+                  <select
+                    value={videoForm.status}
+                    onChange={e => setVideoForm({ ...videoForm, status: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                  >
+                    <option value="PUBLISHED">Published</option>
+                    <option value="DRAFT">Draft (hidden)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Tags</label>
                   <input
-                    type="number"
-                    value={videoForm.previewTrimSeconds}
-                    onChange={e => setVideoForm({ ...videoForm, previewTrimSeconds: Number(e.target.value) })}
+                    type="text"
+                    placeholder="4K, Featured"
+                    value={videoForm.tags}
+                    onChange={e => setVideoForm({ ...videoForm, tags: e.target.value })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
                   />
                 </div>
               </div>
 
+              <p className="text-[10px] text-slate-500">
+                The file uploads first, then the listing is created pointing at the hosted URL. Nothing is published
+                until both succeed.
+              </p>
+
               <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowVideoModal(false)}
-                  className="flex-1 bg-white/10 text-white py-2 rounded-xl"
-                >
+                <button type="button" onClick={resetVideoModal} className="flex-1 bg-white/10 text-white py-2 rounded-xl">
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 bg-purple-600 text-white font-bold py-2 rounded-xl"
+                  disabled={busy}
+                  className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-2 rounded-xl"
                 >
-                  Publish Video
+                  {busy ? 'Uploading & publishing…' : 'Upload & publish'}
                 </button>
               </div>
             </form>
@@ -714,108 +982,351 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
         </div>
       )}
 
-      {/* CREATE PACK MODAL */}
+      {/* PACK MODAL */}
       {showPackModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-[#121424] border border-white/15 rounded-3xl p-6 w-full max-w-lg space-y-4">
-            <h3 className="font-bold text-white text-base">Add New Digital Pack</h3>
-            <form onSubmit={handleAddPack} className="space-y-3 text-xs">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#121424] border border-white/15 rounded-3xl p-6 w-full max-w-xl space-y-4 my-auto">
+            <h3 className="font-bold text-white text-base">Publish a pack</h3>
+            <p className="text-[11px] text-slate-400 -mt-2">
+              Sell downloads, delivery links (Telegram, WhatsApp, MEGA, Drive), in-pack videos that play on this site,
+              or any mix. Add a demo video and preview photos so shoppers can see what they are paying for.
+            </p>
+            <form onSubmit={submitPack} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-400 mb-1">Files buyers download</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => packInputRef.current?.click()}
+                    className="bg-pink-600 hover:bg-pink-500 text-white font-bold px-3 py-2 rounded-xl flex items-center gap-1.5"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    Choose files
+                  </button>
+                  <input
+                    ref={packInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={e => {
+                      const chosen = Array.from(e.target.files ?? []);
+                      setPackFiles(prev => (prev.length ? [...prev, ...chosen] : chosen));
+                      e.target.value = '';
+                    }}
+                  />
+                  <span className="text-slate-400">
+                    {packFiles.length ? `${packFiles.length} selected · ${humanBytes(packBytesTotal)}` : 'zip, rar, 7z, pdf…'}
+                  </span>
+                </div>
+                {packFiles.length > 0 && (
+                  <ul className="mt-2 space-y-1 max-h-28 overflow-y-auto pr-1">
+                    {packFiles.map((f, i) => (
+                      <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 text-[11px] text-slate-300 bg-black/30 rounded-lg px-2.5 py-1.5">
+                        <span className="truncate">{f.name}</span>
+                        <span className="font-mono text-slate-500 shrink-0">{humanBytes(f.size)}</span>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${f.name}`}
+                          onClick={() => setPackFiles(prev => prev.filter((_, idx) => idx !== i))}
+                          className="text-slate-500 hover:text-rose-400 shrink-0"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">Delivery links</label>
+                <div className="space-y-2">
+                  {packLinks.map((row, i) => {
+                    const meta = DELIVERY_PLATFORMS.find(i2 => i2.provider === row.provider) ?? DELIVERY_PLATFORMS[DELIVERY_PLATFORMS.length - 1];
+                    return (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <select
+                          value={row.provider}
+                          aria-label={`Link ${i + 1} platform`}
+                          onChange={e => setPackLinks(prev => prev.map((r, idx) => (idx === i ? { ...r, provider: e.target.value } : r)))}
+                          className="bg-black/40 border border-white/10 text-white rounded-lg px-2 py-1.5 text-[11px] shrink-0 focus:outline-none focus:border-purple-500"
+                        >
+                          {DELIVERY_PLATFORMS.map(p => (
+                            <option key={p.provider} value={p.provider}>{p.name}</option>
+                          ))}
+                        </select>
+                        <input
+                          value={row.url}
+                          aria-label={`Link ${i + 1} address`}
+                          onChange={e => setPackLinks(prev => prev.map((r, idx) => (idx === i ? { ...r, url: e.target.value } : r)))}
+                          placeholder={meta.placeholder}
+                          className="flex-1 min-w-0 bg-black/40 border border-white/10 text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-purple-500"
+                        />
+                        <button
+                          type="button"
+                          aria-label={`Remove link ${i + 1}`}
+                          onClick={() => setPackLinks(prev => prev.filter((_, idx) => idx !== i))}
+                          className="text-slate-500 hover:text-rose-400 shrink-0"
+                        >
+                          <XCircle className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setPackLinks(prev => [...prev, { provider: 'TELEGRAM', url: '' }])}
+                      className="bg-white/10 hover:bg-white/20 text-white font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add link
+                    </button>
+                    <span className="text-slate-400">
+                      {filledPackLinks
+                        ? `Buyers get these after unlocking, and the pack shows under ${Array.from(new Set(packLinks.filter(l => l.url.trim()).map(l => DELIVERY_PLATFORMS.find(p => p.provider === l.provider)?.name ?? l.provider))).join(' / ')}.`
+                        : 'Telegram invites, WhatsApp groups, MEGA or Drive folders. Leave empty if the pack only ships files.'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">Videos buyers watch in-site</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => packVideoInputRef.current?.click()}
+                    className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-3 py-2 rounded-xl flex items-center gap-1.5"
+                  >
+                    <Film className="w-3.5 h-3.5" />
+                    Add videos
+                  </button>
+                  <input
+                    ref={packVideoInputRef}
+                    type="file"
+                    accept="video/*"
+                    multiple
+                    className="hidden"
+                    onChange={async e => {
+                      await addPackVideos(Array.from(e.target.files ?? []));
+                      e.target.value = '';
+                    }}
+                  />
+                  <span className="text-slate-400">
+                    {packVideos.length
+                      ? `${packVideos.length} clip(s) · ${formatDuration(packVideoSeconds)} total`
+                      : 'A pack with videos shows up under the Video Packs tab.'}
+                  </span>
+                </div>
+                {packVideos.length > 0 && (
+                  <ul className="mt-2 space-y-1 max-h-28 overflow-y-auto pr-1">
+                    {packVideos.map((v, i) => (
+                      <li key={`${v.file.name}-${i}`} className="flex items-center justify-between gap-2 text-[11px] text-slate-300 bg-black/30 rounded-lg px-2.5 py-1.5">
+                        <span className="truncate">{v.file.name}</span>
+                        <span className="font-mono text-slate-500 shrink-0">
+                          {v.durationSeconds ? formatDuration(v.durationSeconds) : 'runtime unknown'} · {humanBytes(v.file.size)}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${v.file.name}`}
+                          onClick={() => setPackVideos(prev => prev.filter((_, idx) => idx !== i))}
+                          className="text-slate-500 hover:text-rose-400 shrink-0"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">Master demo video</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => packDemoInputRef.current?.click()}
+                    className="bg-white/10 hover:bg-white/20 text-white font-bold px-3 py-2 rounded-xl flex items-center gap-1.5"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    {packDemoVideo ? 'Replace demo' : 'Choose demo video'}
+                  </button>
+                  <input
+                    ref={packDemoInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={async e => {
+                      const file = (e.target.files ?? [])[0] ?? null;
+                      setPackDemoVideo(file);
+                      if (file) setPackDemoDuration(await probeVideoDuration(file));
+                      e.target.value = '';
+                    }}
+                  />
+                  <span className="text-slate-400">
+                    {packDemoVideo
+                      ? `${packDemoVideo.name} · ${packDemoDuration ? formatDuration(packDemoDuration) : 'runtime unknown'}`
+                      : 'Plays free, before payment, so shoppers see what is inside.'}
+                  </span>
+                  {packDemoVideo && (
+                    <button
+                      type="button"
+                      aria-label="Remove master demo"
+                      onClick={() => setPackDemoVideo(null)}
+                      className="text-slate-500 hover:text-rose-400"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">Demo photos of the contents</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => packPhotoInputRef.current?.click()}
+                    className="bg-white/10 hover:bg-white/20 text-white font-bold px-3 py-2 rounded-xl flex items-center gap-1.5"
+                  >
+                    <PhotoIcon className="w-3.5 h-3.5" />
+                    Add photos
+                  </button>
+                  <input
+                    ref={packPhotoInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={e => {
+                      // Snapshot the FileList first: this input is cleared below, and a lazy state
+                      // updater would otherwise read an empty list at render time.
+                      const chosen = Array.from(e.target.files ?? []);
+                      setPackPhotos(prev => [...prev, ...chosen]);
+                      e.target.value = '';
+                    }}
+                  />
+                  <span className="text-slate-400">
+                    {packPhotos.length ? `${packPhotos.length} preview(s) · ${humanBytes(packPhotos.reduce((s, f) => s + f.size, 0))}` : 'Scrollable strip on the pack page, visible without buying.'}
+                  </span>
+                </div>
+                {packPhotos.length > 0 && (
+                  <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                    {packPhotos.map((f, i) => (
+                      <div key={`${f.name}-${i}`} className="relative shrink-0 w-20 h-14 rounded-lg overflow-hidden border border-white/10">
+                        <img src={URL.createObjectURL(f)} alt={f.name} className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          aria-label={`Remove ${f.name}`}
+                          onClick={() => setPackPhotos(prev => prev.filter((_, idx) => idx !== i))}
+                          className="absolute top-0.5 right-0.5 bg-black/70 rounded-full p-0.5 text-slate-300 hover:text-rose-400"
+                        >
+                          <XCircle className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-slate-400 mb-1">Title</label>
                 <input
                   required
                   type="text"
-                  placeholder="e.g. VIP Mega Archive 9GB"
+                  placeholder="e.g. VIP Archive Bundle"
                   value={packForm.title}
                   onChange={e => setPackForm({ ...packForm, title: e.target.value })}
                   className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
                 />
               </div>
 
+              <div>
+                <label className="block text-slate-400 mb-1">Description</label>
+                <textarea
+                  required
+                  rows={2}
+                  value={packForm.description}
+                  onChange={e => setPackForm({ ...packForm, description: e.target.value })}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 mb-1">Platform</label>
+                  <label className="block text-slate-400 mb-1">Category</label>
                   <select
-                    value={packForm.platform}
-                    onChange={e => setPackForm({ ...packForm, platform: e.target.value as any })}
+                    value={packForm.category || categories[0]?.name || ''}
+                    onChange={e => setPackForm({ ...packForm, category: e.target.value })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
                   >
-                    <option value="MEGA">MEGA</option>
-                    <option value="Google Drive">Google Drive</option>
-                    <option value="Telegram">Telegram</option>
-                    <option value="WhatsApp">WhatsApp</option>
+                    {categories.map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
                   </select>
                 </div>
-
                 <div>
-                  <label className="block text-slate-400 mb-1">Pack Size</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 9.0 GB"
-                    value={packForm.fileSize}
-                    onChange={e => setPackForm({ ...packForm, fileSize: e.target.value })}
+                  <label className="block text-slate-400 mb-1">Access window</label>
+                  <select
+                    value={packForm.access_duration_type}
+                    onChange={e => setPackForm({ ...packForm, access_duration_type: e.target.value })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
-                  />
+                  >
+                    {DURATIONS.map(d => (
+                      <option key={d.value} value={d.value}>{d.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 mb-1">Credit Price</label>
+                  <label className="block text-slate-400 mb-1">Price (credits)</label>
                   <input
                     type="number"
-                    value={packForm.creditPrice}
-                    onChange={e => setPackForm({ ...packForm, creditPrice: Number(e.target.value) })}
+                    min="0"
+                    value={packForm.price}
+                    onChange={e => setPackForm({ ...packForm, price: Number(e.target.value) })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
                   />
                 </div>
-
                 <div>
-                  <label className="block text-slate-400 mb-1">Item Count</label>
-                  <input
-                    type="number"
-                    value={packForm.itemCount}
-                    onChange={e => setPackForm({ ...packForm, itemCount: Number(e.target.value) })}
+                  <label className="block text-slate-400 mb-1">Visibility</label>
+                  <select
+                    value={packForm.status}
+                    onChange={e => setPackForm({ ...packForm, status: e.target.value })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
-                  />
+                  >
+                    <option value="PUBLISHED">Published</option>
+                    <option value="DRAFT">Draft (hidden)</option>
+                  </select>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-slate-400 mb-1">Authorized Access Destination URL</label>
-                <input
-                  required
-                  type="text"
-                  placeholder="e.g. https://mega.nz/folder/..."
-                  value={packForm.accessUrl}
-                  onChange={e => setPackForm({ ...packForm, accessUrl: e.target.value })}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-400 mb-1">Included Items (one per line)</label>
-                <textarea
-                  rows={3}
-                  value={packForm.includedItemsText}
-                  onChange={e => setPackForm({ ...packForm, includedItemsText: e.target.value })}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
-                />
-              </div>
+              <p className="text-[10px] text-slate-500">
+                Every asset is uploaded to this server before the pack is created; nothing is published if an upload
+                fails. Downloadable files and in-pack videos stay premium-only, so no address reaches a shopper who has
+                not paid. The demo video and preview photos are the only parts a guest can open. Sizes and runtimes are
+                measured from the real files, never typed in.
+              </p>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowPackModal(false)}
+                  onClick={resetPackModal}
                   className="flex-1 bg-white/10 text-white py-2 rounded-xl"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 bg-pink-600 text-white font-bold py-2 rounded-xl"
+                  disabled={busy || (packFiles.length === 0 && packVideos.length === 0 && filledPackLinks === 0)}
+                  className="flex-1 bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white font-bold py-2 rounded-xl"
                 >
-                  Publish Pack
+                  {busy
+                    ? `Uploading ${packAssetBytes ? `${humanBytes(packAssetBytes)}…` : '…'}`
+                    : 'Upload & publish'}
                 </button>
               </div>
             </form>
@@ -823,6 +1334,131 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
         </div>
       )}
 
+      {previewTarget && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#121424] border border-white/15 rounded-3xl p-6 w-full max-w-md space-y-4 my-auto">
+            <h3 className="font-bold text-white text-base">Preview for “{previewTarget.title}”</h3>
+            <p className="text-[11px] text-slate-400 -mt-2">
+              The preview is what plays free, before a shopper spends credits. {previewTarget.hasPreview
+                ? 'This listing already has one; whatever you pick here replaces it.'
+                : 'This listing has none, so shoppers only see the cover and the description.'}
+            </p>
+
+            <div className="space-y-2 text-xs">
+              {(
+                [
+                  { id: 'trim', name: 'Cut one from the paid video', hint: 'The server trims the first seconds of the real file with ffmpeg. Nothing is faked: if the server cannot cut video, it tells you.' },
+                  { id: 'upload', name: 'Use my own clip', hint: 'Attach any short video you have already prepared.' },
+                  { id: 'none', name: 'No preview', hint: 'Leave the listing fully locked until someone pays.' }
+                ] as const
+              ).map(option => (
+                <label key={option.id} className={`flex items-start gap-2 border rounded-xl p-3 cursor-pointer ${previewMode === option.id ? 'border-purple-500 bg-purple-950/30' : 'border-white/10 bg-[#0b0c16]'}`}>
+                  <input
+                    type="radio"
+                    name="preview-mode"
+                    checked={previewMode === option.id}
+                    onChange={() => setPreviewMode(option.id)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block font-bold text-white">{option.name}</span>
+                    <span className="block text-[11px] text-slate-400">{option.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {previewMode === 'trim' && (
+              <div className="flex gap-2 text-xs">
+                <label className="flex-1">
+                  <span className="block text-slate-400 mb-1">Length (seconds)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={previewSeconds}
+                    onChange={e => setPreviewSeconds(e.target.value)}
+                    placeholder="20"
+                    className="w-full bg-[#0b0c16] border border-white/10 text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-purple-500"
+                  />
+                </label>
+                <label className="flex-1">
+                  <span className="block text-slate-400 mb-1">Start at (seconds)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={previewStart}
+                    onChange={e => setPreviewStart(e.target.value)}
+                    placeholder="0"
+                    className="w-full bg-[#0b0c16] border border-white/10 text-white rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-purple-500"
+                  />
+                </label>
+              </div>
+            )}
+            {previewMode === 'trim' && (
+              <p className="text-[11px] text-slate-500">
+                Leaving the length empty uses the Auto-Preview Length in Platform Settings.
+              </p>
+            )}
+
+            {previewMode === 'upload' && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => previewClipInputRef.current?.click()}
+                  className="bg-white/10 hover:bg-white/20 text-white font-bold px-3 py-2 rounded-xl flex items-center gap-1.5"
+                >
+                  <Film className="w-3.5 h-3.5" />
+                  Choose clip
+                </button>
+                <input
+                  ref={previewClipInputRef}
+                  type="file"
+                  accept="video/*"
+                  className="hidden"
+                  onChange={e => {
+                    const chosen = e.target.files?.[0] ?? null;
+                    setPreviewClipFile(chosen);
+                    e.target.value = '';
+                  }}
+                />
+                <span className="text-slate-400">
+                  {previewClipFile ? `${previewClipFile.name} · ${humanBytes(previewClipFile.size)}` : 'mp4, webm, mov…'}
+                </span>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPreviewTarget(null)}
+                className="flex-1 bg-white/10 text-white py-2 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void runPreviewAction()}
+                disabled={busy || (previewMode === 'upload' && !previewClipFile) || previewMode === 'none'}
+                className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-2 rounded-xl"
+              >
+                {previewMode === 'none'
+                  ? 'Remove preview'
+                  : previewMode === 'upload'
+                    ? 'Attach preview'
+                    : busy
+                      ? 'Cutting…'
+                      : 'Cut preview'}
+              </button>
+            </div>
+            {previewMode === 'none' && (
+              <p className="text-[11px] text-slate-400">
+                Press “Remove preview” to lock this listing completely.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

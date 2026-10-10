@@ -1,57 +1,94 @@
-import { Video, DigitalPack, User, Transaction, Review, ContentReport, NotificationItem, SEOSettings } from '../types';
-import { 
-  INITIAL_VIDEOS, 
-  INITIAL_PACKS, 
-  INITIAL_USER, 
-  INITIAL_TRANSACTIONS, 
-  INITIAL_SEO, 
-  INITIAL_NOTIFICATIONS,
-  generateThumbnailSvg 
-} from '../data/initialData';
+import { api } from './api';
+import type {
+  AdminProductPayload,
+  ApiFailure,
+  ContentAccess,
+  MediaAsset,
+  MediaRow,
+  PaymentProvider,
+  PlatformSettingRow,
+  SessionUser,
+  SupportChannelsPublic,
+  TopupRow,
+  Wallet,
+} from './api';
+import {
+  GUEST_USER,
+  applyPackAccess,
+  applyPackPreview,
+  applyStreamAccess,
+  isPackProduct,
+  isVideoProduct,
+  toNotification,
+  toPack,
+  toTransaction,
+  toUser,
+  toVideo,
+} from './mappers';
+import type { DigitalPack, NotificationItem, PackVideo, Transaction, User, Video } from '../types';
 
-const STORAGE_KEYS = {
-  VIDEOS: 'desi_ero_videos_v2',
-  PACKS: 'desi_ero_packs_v2',
-  USER: 'desi_ero_user_v2',
-  TRANSACTIONS: 'desi_ero_transactions_v2',
-  REVIEWS: 'desi_ero_reviews_v2',
-  REPORTS: 'desi_ero_reports_v2',
-  NOTIFICATIONS: 'desi_ero_notifications_v2',
-  SEO: 'desi_ero_seo_v2'
-};
+/**
+ * This store holds no data of its own any more. It caches what the Desi Ero API returns
+ * and forwards every mutation to a route. The getters stay synchronous so the existing
+ * components do not all need to await, but they are only populated once bootstrap() resolves.
+ */
 
-function safeGet<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw);
-  } catch (e) {
-    console.warn(`Failed to read from localStorage key "${key}"`, e);
-    return fallback;
+export interface ActionResult {
+  success: boolean;
+  message: string;
+  balance?: number;
+}
+
+function describeError(err: unknown): string {
+  const failure = err as ApiFailure;
+  switch (failure?.code) {
+    case 'UNAUTHORIZED':
+      return 'Please sign in to continue.';
+    case 'INSUFFICIENT_CREDITS': {
+      const required = failure.payload?.required_credits;
+      const current = failure.payload?.current_balance;
+      return required === undefined
+        ? 'Not enough credits in your wallet.'
+        : `Not enough credits: this costs ${required} and your wallet holds ${current}.`;
+    }
+    case 'NO_ACTIVE_PURCHASE':
+      return 'Unlock this item to see the delivery links.';
+    case 'ACCESS_EXPIRED':
+      return 'Your access to this item has expired.';
+    case 'FORBIDDEN':
+      return 'Your account is not allowed to do that.';
+    case 'DUPLICATE_REFERENCE':
+      return 'That transaction ID has already been submitted for review.';
+    case 'UPLOAD_REJECTED':
+    case 'UNSUPPORTED_FILE_TYPE':
+      return failure.message || 'That file type cannot be uploaded.';
+    default:
+      return failure?.message || 'Something went wrong. Please try again.';
   }
 }
 
-function safeSet<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (e) {
-    console.warn(`Failed to save to localStorage key "${key}"`, e);
-  }
-}
-
-// In-memory + LocalStorage central store singleton
 class AppStore {
-  private videos: Video[] = safeGet(STORAGE_KEYS.VIDEOS, INITIAL_VIDEOS);
-  private packs: DigitalPack[] = safeGet(STORAGE_KEYS.PACKS, INITIAL_PACKS);
-  private user: User = safeGet(STORAGE_KEYS.USER, INITIAL_USER);
-  private transactions: Transaction[] = safeGet(STORAGE_KEYS.TRANSACTIONS, INITIAL_TRANSACTIONS);
-  private reviews: Review[] = safeGet(STORAGE_KEYS.REVIEWS, []);
-  private reports: ContentReport[] = safeGet(STORAGE_KEYS.REPORTS, []);
-  private notifications: NotificationItem[] = safeGet(STORAGE_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
-  private seo: SEOSettings = safeGet(STORAGE_KEYS.SEO, INITIAL_SEO);
-  private listeners: Set<() => void> = new Set();
-  private unlockInFlight: Set<string> = new Set(); // Prevent race conditions / double clicks
+  private videos: Video[] = [];
+  private packs: DigitalPack[] = [];
+  private user: User = GUEST_USER;
+  private session: SessionUser | null = null;
+  private transactions: Transaction[] = [];
+  private notifications: NotificationItem[] = [];
+  private providers: PaymentProvider[] = [];
+  private support: SupportChannelsPublic | null = null;
+  private pendingTopups: TopupRow[] = [];
+  private uploads: MediaAsset[] = [];
+  private adminStats: Record<string, number | string> = {};
+  private accessCache = new Map<number, ContentAccess>();
+  private progressTimers = new Map<string, number>();
+  private listeners = new Set<() => void>();
 
+  private booted = false;
+  private loading = false;
+  private loginRequested = false;
+  private statusMessage: string | null = null;
+
+  // --- SUBSCRIPTION ---
   public subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -61,13 +98,21 @@ class AppStore {
     this.listeners.forEach(fn => fn());
   }
 
-  // --- GETTERS ---
+  // --- SYNCHRONOUS GETTERS ---
   public getVideos(): Video[] {
     return [...this.videos];
   }
 
   public getPacks(): DigitalPack[] {
     return [...this.packs];
+  }
+
+  public getVideo(id: string): Video | undefined {
+    return this.videos.find(v => v.id === id);
+  }
+
+  public getPack(id: string): DigitalPack | undefined {
+    return this.packs.find(p => p.id === id);
   }
 
   public getUser(): User {
@@ -78,416 +123,708 @@ class AppStore {
     return [...this.transactions];
   }
 
-  public getReviews(targetId?: string): Review[] {
-    if (targetId) {
-      return this.reviews.filter(r => r.targetId === targetId);
-    }
-    return [...this.reviews];
-  }
-
-  public getReports(): ContentReport[] {
-    return [...this.reports];
-  }
-
   public getNotifications(): NotificationItem[] {
     return [...this.notifications];
   }
 
-  public getSEO(): SEOSettings {
-    return { ...this.seo };
+  /** Only providers with at least one usable mode are offered to a buyer. */
+  public getPaymentProviders(): PaymentProvider[] {
+    return this.providers.filter(p => p.modes.some(m => m.status === 'ACTIVE'));
   }
 
-  // --- VIDEO & PACK UNLOCKS (ATOMIC & IDEMPOTENT) ---
-  public unlockVideo(videoId: string): { success: boolean; message: string; balance: number } {
-    const lockKey = `video_${videoId}_${this.user.id}`;
-    if (this.unlockInFlight.has(lockKey)) {
-      return { success: false, message: 'Transaction already processing...', balance: this.user.walletBalance };
-    }
-    this.unlockInFlight.add(lockKey);
-
-    try {
-      const video = this.videos.find(v => v.id === videoId);
-      if (!video) {
-        return { success: false, message: 'Video not found in catalog', balance: this.user.walletBalance };
-      }
-
-      // Already unlocked
-      if (this.user.unlockedVideoIds.includes(videoId)) {
-        return { success: true, message: 'You already own this video.', balance: this.user.walletBalance };
-      }
-
-      const cost = video.isFree ? 0 : video.creditPrice;
-
-      if (!video.isFree && this.user.walletBalance < cost) {
-        return {
-          success: false,
-          message: `Insufficient balance: You need ${cost} credits, but have ${this.user.walletBalance}.`,
-          balance: this.user.walletBalance
-        };
-      }
-
-      // Atomic deduction
-      const newBalance = this.user.walletBalance - cost;
-      const ref = `TXN-${Math.floor(1000 + Math.random() * 9000)}-VID`;
-
-      const txn: Transaction = {
-        id: 'txn_' + Date.now(),
-        reference: ref,
-        userId: this.user.id,
-        type: 'video_unlock',
-        amount: -cost,
-        balanceAfter: newBalance,
-        itemId: video.id,
-        itemTitle: video.title,
-        status: 'completed',
-        createdAt: new Date().toISOString()
-      };
-
-      this.user.walletBalance = newBalance;
-      this.user.unlockedVideoIds = [...this.user.unlockedVideoIds, videoId];
-      this.transactions = [txn, ...this.transactions];
-
-      // Add notification
-      const notif: NotificationItem = {
-        id: 'notif_' + Date.now(),
-        userId: this.user.id,
-        title: 'Video Unlocked!',
-        message: `You unlocked "${video.title}" for ${cost} credits. Added to your library.`,
-        type: 'purchase',
-        read: false,
-        createdAt: new Date().toISOString()
-      };
-      this.notifications = [notif, ...this.notifications];
-
-      this.persist();
-      this.notify();
-
-      return {
-        success: true,
-        message: video.isFree ? 'Free video added to library!' : `Unlocked successfully for ${cost} credits!`,
-        balance: newBalance
-      };
-    } finally {
-      this.unlockInFlight.delete(lockKey);
-    }
+  public getSupport(): SupportChannelsPublic | null {
+    return this.support;
   }
 
-  public unlockPack(packId: string): { success: boolean; message: string; accessUrl?: string; balance: number } {
-    const lockKey = `pack_${packId}_${this.user.id}`;
-    if (this.unlockInFlight.has(lockKey)) {
-      return { success: false, message: 'Transaction already processing...', balance: this.user.walletBalance };
-    }
-    this.unlockInFlight.add(lockKey);
-
-    try {
-      const pack = this.packs.find(p => p.id === packId);
-      if (!pack) {
-        return { success: false, message: 'Pack not found', balance: this.user.walletBalance };
-      }
-
-      if (this.user.unlockedPackIds.includes(packId)) {
-        return {
-          success: true,
-          message: 'You already own this pack.',
-          accessUrl: pack.accessUrl,
-          balance: this.user.walletBalance
-        };
-      }
-
-      const cost = pack.creditPrice;
-      if (this.user.walletBalance < cost) {
-        return {
-          success: false,
-          message: `Insufficient balance: You need ${cost} credits to unlock this ${pack.fileSize} pack.`,
-          balance: this.user.walletBalance
-        };
-      }
-
-      const newBalance = this.user.walletBalance - cost;
-      const ref = `TXN-${Math.floor(1000 + Math.random() * 9000)}-PAK`;
-
-      const txn: Transaction = {
-        id: 'txn_' + Date.now(),
-        reference: ref,
-        userId: this.user.id,
-        type: 'pack_unlock',
-        amount: -cost,
-        balanceAfter: newBalance,
-        itemId: pack.id,
-        itemTitle: pack.title,
-        status: 'completed',
-        createdAt: new Date().toISOString()
-      };
-
-      this.user.walletBalance = newBalance;
-      this.user.unlockedPackIds = [...this.user.unlockedPackIds, packId];
-      this.transactions = [txn, ...this.transactions];
-
-      const notif: NotificationItem = {
-        id: 'notif_' + Date.now(),
-        userId: this.user.id,
-        title: 'Pack Purchased!',
-        message: `Unlocked "${pack.title}" (${pack.fileSize}) for ${cost} credits. Download link ready in My Library.`,
-        type: 'purchase',
-        read: false,
-        createdAt: new Date().toISOString()
-      };
-      this.notifications = [notif, ...this.notifications];
-
-      this.persist();
-      this.notify();
-
-      return {
-        success: true,
-        message: `Pack unlocked! Delivery access granted for ${pack.platform}.`,
-        accessUrl: pack.accessUrl,
-        balance: newBalance
-      };
-    } finally {
-      this.unlockInFlight.delete(lockKey);
-    }
+  public getPendingTopups(): TopupRow[] {
+    return [...this.pendingTopups];
   }
 
-  // --- WALLET & TOP-UP ---
-  public topUpCredits(amount: number, paymentMethod: string): { success: boolean; newBalance: number; reference: string } {
-    if (amount <= 0) return { success: false, newBalance: this.user.walletBalance, reference: '' };
+  public getUploads(): MediaAsset[] {
+    return [...this.uploads];
+  }
 
-    const newBalance = this.user.walletBalance + amount;
-    const ref = `DEP-${Math.floor(10000 + Math.random() * 90000)}`;
+  public getAdminStats(): Record<string, number | string> {
+    return { ...this.adminStats };
+  }
 
-    const txn: Transaction = {
-      id: 'txn_' + Date.now(),
-      reference: ref,
-      userId: this.user.id,
-      type: 'deposit',
-      amount: amount,
-      balanceAfter: newBalance,
-      status: 'completed',
-      createdAt: new Date().toISOString(),
-      paymentMethod
-    };
+  public isBooted(): boolean {
+    return this.booted;
+  }
 
-    this.user.walletBalance = newBalance;
-    this.transactions = [txn, ...this.transactions];
+  public isLoading(): boolean {
+    return this.loading;
+  }
 
-    const notif: NotificationItem = {
-      id: 'notif_' + Date.now(),
-      userId: this.user.id,
-      title: 'Credits Added',
-      message: `Deposit of ${amount} credits was successfully added via ${paymentMethod}.`,
-      type: 'deposit',
-      read: false,
-      createdAt: new Date().toISOString()
-    };
-    this.notifications = [notif, ...this.notifications];
+  public isLoginRequested(): boolean {
+    return this.loginRequested;
+  }
 
-    this.persist();
+  public getStatusMessage(): string | null {
+    return this.statusMessage;
+  }
+
+  public isAuthenticated(): boolean {
+    return this.session !== null;
+  }
+
+  public isAdmin(): boolean {
+    return this.user.role === 'ADMIN' || this.user.role === 'SUPER_ADMIN';
+  }
+
+  public isSuperAdmin(): boolean {
+    return this.user.role === 'SUPER_ADMIN';
+  }
+
+  public ownsVideo(id: string): boolean {
+    return this.user.unlockedVideoIds.includes(id) || !!this.getVideo(id)?.access?.has_access;
+  }
+
+  public ownsPack(id: string): boolean {
+    return this.user.unlockedPackIds.includes(id) || !!this.getPack(id)?.access?.has_access;
+  }
+
+  private async run<T>(label: string, fn: () => Promise<T>): Promise<T | null> {
+    this.loading = true;
+    this.statusMessage = null;
     this.notify();
-
-    return { success: true, newBalance, reference: ref };
+    try {
+      return await fn();
+    } catch (err) {
+      console.error(`[store] ${label} failed`, err);
+      this.statusMessage = describeError(err);
+      return null;
+    } finally {
+      this.loading = false;
+      this.notify();
+    }
   }
 
-  public applyCoupon(code: string): { success: boolean; message: string; bonusCredits?: number } {
-    const trimmed = code.trim().toUpperCase();
-    if (trimmed === 'WELCOME50') {
-      const bonus = 50;
-      this.topUpCredits(bonus, 'Coupon: WELCOME50');
-      return { success: true, message: `Coupon applied! +${bonus} credits added to your wallet.`, bonusCredits: bonus };
-    }
-    if (trimmed === 'DESIPRO') {
-      const bonus = 100;
-      this.topUpCredits(bonus, 'Coupon: DESIPRO');
-      return { success: true, message: `VIP promo applied! +${bonus} credits added.`, bonusCredits: bonus };
-    }
-    return { success: false, message: 'Invalid or expired coupon code. Try WELCOME50 or DESIPRO.' };
+  private fail(): { success: false; message: string } {
+    return { success: false, message: this.statusMessage ?? 'Request failed.' };
   }
 
-  // --- WATCH HISTORY & PROGRESS ---
+  // --- BOOTSTRAP ---
+  public async bootstrap(): Promise<void> {
+    await Promise.all([this.refreshSession(), this.refreshCatalogue(), this.loadPaymentMethods(), this.loadSupport()]);
+    this.booted = true;
+    this.notify();
+  }
+
+  public async refreshCatalogue(): Promise<void> {
+    const result = await this.run('refreshCatalogue', () => api.catalogue.list({ limit: 60 }));
+    if (!result) return;
+    const published = result.products.filter(p => p.status === 'PUBLISHED');
+    this.videos = published.filter(isVideoProduct).map(toVideo);
+    this.packs = published.filter(isPackProduct).map(toPack);
+    this.notify();
+  }
+
+  public async refreshSession(): Promise<void> {
+    const me = await this.run('refreshSession', () => api.auth.me());
+    if (!me) return;
+    if (!me.user) {
+      this.session = null;
+      this.user = GUEST_USER;
+      this.transactions = [];
+      this.notifications = [];
+      this.notify();
+      return;
+    }
+    this.session = me.user;
+    await this.loadPersonal(me.wallet);
+  }
+
+  /** Wallet, ledger, notifications and library for the signed-in viewer. */
+  private async loadPersonal(fallbackWallet: Wallet | null): Promise<void> {
+    const [wallet, transactions, notifications, library] = await Promise.all([
+      api.wallet.get().catch(() => null),
+      api.wallet.transactions().catch(() => null),
+      api.notifications.list().catch(() => null),
+      api.library.get().catch(() => null),
+    ]);
+    if (!this.session) return;
+    this.user = toUser(this.session, wallet?.wallet ?? fallbackWallet, { videos: this.videos, packs: this.packs }, library?.library ?? null);
+    this.transactions = (transactions?.transactions ?? []).map(toTransaction);
+    this.notifications = (notifications?.notifications ?? []).map(toNotification);
+    this.notify();
+  }
+
+  public async loadPaymentMethods(): Promise<void> {
+    const result = await this.run('loadPaymentMethods', () => api.payments.methods());
+    if (!result) return;
+    this.providers = result.providers;
+    this.notify();
+  }
+
+  public async loadSupport(): Promise<void> {
+    const result = await this.run('loadSupport', () => api.settings.public());
+    if (!result) return;
+    this.support = result.support;
+    this.notify();
+  }
+
+  // --- AUTH ---
+  public async login(email: string, password: string): Promise<ActionResult> {
+    const result = await this.run('login', () => api.auth.login(email, password));
+    if (!result?.user) return this.fail();
+    this.session = result.user;
+    this.loginRequested = false;
+    await this.loadPersonal(result.wallet);
+    await this.refreshCatalogue();
+    if (this.isAdmin()) await this.loadAdmin();
+    return { success: true, message: `Welcome back, ${result.user.username}.`, balance: result.wallet?.balance };
+  }
+
+  public async register(email: string, username: string, password: string): Promise<ActionResult> {
+    const result = await this.run('register', () => api.auth.register(email, username, password));
+    if (!result?.user) return this.fail();
+    this.session = result.user;
+    this.loginRequested = false;
+    await this.loadPersonal(result.wallet);
+    await this.refreshCatalogue();
+    return { success: true, message: `Account created with ${result.wallet?.balance ?? 0} welcome credits.`, balance: result.wallet?.balance };
+  }
+
+  public async logout(): Promise<void> {
+    await this.run('logout', () => api.auth.logout());
+    this.session = null;
+    this.user = GUEST_USER;
+    this.transactions = [];
+    this.notifications = [];
+    this.pendingTopups = [];
+    this.videos = this.videos.map(v => ({ ...v, access: null, streamUrl: null }));
+    this.packs = this.packs.map(p => ({ ...p, access: null, files: [], totalBytes: 0 }));
+    this.accessCache.clear();
+    this.notify();
+  }
+
+  public requestLogin(): void {
+    this.loginRequested = true;
+    this.notify();
+  }
+
+  public clearLoginRequest(): void {
+    this.loginRequested = false;
+    this.notify();
+  }
+
+  // --- PURCHASES ---
+  public async unlockVideo(videoId: string): Promise<ActionResult> {
+    return this.purchase(videoId, 'video');
+  }
+
+  public async unlockPack(packId: string): Promise<ActionResult> {
+    return this.purchase(packId, 'pack');
+  }
+
+  private async purchase(itemId: string, kind: 'video' | 'pack'): Promise<ActionResult> {
+    if (!this.isAuthenticated()) {
+      this.requestLogin();
+      return { success: false, message: 'Sign in to unlock content.' };
+    }
+    const item = kind === 'video' ? this.getVideo(itemId) : this.getPack(itemId);
+    if (!item) return { success: false, message: 'Item not found in the catalogue.' };
+    if (item.access?.has_access) return { success: true, message: 'You already own this.', balance: this.user.walletBalance };
+
+    const result = await this.run('purchase', () => api.catalogue.purchase(item.productId));
+    if (!result) return this.fail();
+
+    this.accessCache.delete(item.productId);
+    await this.loadPersonal(null);
+    await this.refreshCatalogue();
+    await this.loadAccess(item.productId);
+    return {
+      success: true,
+      message: result.message || `Unlocked for ${result.receipt.price_paid} credits.`,
+      balance: result.receipt.balance_remaining,
+    };
+  }
+
+  // --- AUTHORISED ACCESS: the only place premium URLs enter the app ---
+  private async loadAccess(productId: number): Promise<ContentAccess | null> {
+    const cached = this.accessCache.get(productId);
+    if (cached) return cached;
+    const access = await this.run('loadAccess', () => api.content.access(productId));
+    if (!access) return null;
+    this.accessCache.set(productId, access);
+
+    if (this.videos.some(v => v.productId === productId)) {
+      this.videos = this.videos.map(v => (v.productId === productId ? applyStreamAccess(v, access) : v));
+    } else {
+      const deliverables = access.files ?? [];
+      this.packs = this.packs.map(p => (p.productId === productId ? applyPackAccess(p, access, deliverables) : p));
+    }
+    this.notify();
+    return access;
+  }
+
+  public async getStreamUrl(
+    videoId: string
+  ): Promise<{ url: string | null; resumeAt: number; message: string | null }> {
+    if (!this.isAuthenticated()) {
+      this.requestLogin();
+      return { url: null, resumeAt: 0, message: 'Sign in to watch.' };
+    }
+    const video = this.getVideo(videoId);
+    if (!video) return { url: null, resumeAt: 0, message: 'Video not found.' };
+
+    const access = await this.loadAccess(video.productId);
+    if (!access) return { url: null, resumeAt: 0, message: this.statusMessage ?? 'No active purchase for this video.' };
+    const updated = this.getVideo(videoId);
+    return { url: updated?.streamUrl ?? null, resumeAt: access.saved_progress?.position_seconds ?? 0, message: null };
+  }
+
+  public async getPackFiles(
+    packId: string
+  ): Promise<{ files: MediaRow[]; videos: PackVideo[]; message: string | null }> {
+    if (!this.isAuthenticated()) {
+      this.requestLogin();
+      return { files: [], videos: [], message: 'Sign in to view delivery links.' };
+    }
+    const pack = this.getPack(packId);
+    if (!pack) return { files: [], videos: [], message: 'Pack not found.' };
+
+    const access = await this.loadAccess(pack.productId);
+    if (!access) return { files: [], videos: [], message: this.statusMessage ?? 'No active purchase for this pack.' };
+    const updated = this.getPack(packId);
+    return { files: updated?.files ?? [], videos: updated?.videos ?? [], message: null };
+  }
+
+  /** Loads the public preview photos and demo clips a pack advertises. Works without signing in. */
+  public async loadPackPreview(packId: string): Promise<MediaRow[]> {
+    const pack = this.getPack(packId);
+    if (!pack) return [];
+    if (pack.previewPhotos.length || pack.previewClips.length) {
+      return [...pack.previewPhotos, ...pack.previewClips];
+    }
+    const detail = await this.run('packPreview', () => api.catalogue.detail(pack.productId));
+    if (!detail?.media) return [];
+    this.packs = this.packs.map(p => (p.productId === pack.productId ? applyPackPreview(p, detail.media) : p));
+    this.notify();
+    const loaded = this.getPack(packId);
+    return [...(loaded?.previewPhotos ?? []), ...(loaded?.previewClips ?? [])];
+  }
+
+  // --- FAVOURITES & PROGRESS ---
+  public async toggleFavorite(itemId: string): Promise<boolean> {
+    if (!this.isAuthenticated()) {
+      this.requestLogin();
+      return false;
+    }
+    const result = await this.run('toggleFavorite', () => api.catalogue.toggleFavorite(Number(itemId)));
+    if (!result) return false;
+
+    this.videos = this.videos.map(v => (v.id === itemId ? { ...v, isFavorite: result.is_favorite } : v));
+    this.packs = this.packs.map(p => (p.id === itemId ? { ...p, isFavorite: result.is_favorite } : p));
+    const wasFavorite = this.user.favorites.includes(itemId);
+    this.user.favorites = wasFavorite ? this.user.favorites.filter(id => id !== itemId) : [...this.user.favorites, itemId];
+    this.notify();
+    return !wasFavorite;
+  }
+
+  public isFavorite(itemId: string): boolean {
+    return (
+      this.user.favorites.includes(itemId) || !!this.getVideo(itemId)?.isFavorite || !!this.getPack(itemId)?.isFavorite
+    );
+  }
+
+  /** Server-side resume state, debounced so scrubbing does not spam the API. */
   public saveWatchProgress(videoId: string, progressSeconds: number, durationSeconds: number): void {
-    const existingIndex = this.user.watchHistory.findIndex(w => w.videoId === videoId);
-    const entry = {
-      videoId,
-      progressSeconds: Math.floor(progressSeconds),
-      durationSeconds: Math.floor(durationSeconds),
-      lastWatchedAt: new Date().toISOString()
-    };
+    if (!this.isAuthenticated()) return;
+    const existing = this.progressTimers.get(videoId);
+    if (existing) window.clearTimeout(existing);
+    const timer = window.setTimeout(() => {
+      this.progressTimers.delete(videoId);
+      api.content
+        .saveProgress({
+          product_id: Number(videoId),
+          position_seconds: Math.floor(progressSeconds),
+          duration_seconds: Number.isFinite(durationSeconds) ? Math.floor(durationSeconds) : 0,
+        })
+        .catch(err => console.warn('[store] progress save failed', err));
+    }, 4000);
+    this.progressTimers.set(videoId, timer);
+  }
 
-    if (existingIndex >= 0) {
-      this.user.watchHistory[existingIndex] = entry;
-    } else {
-      this.user.watchHistory = [entry, ...this.user.watchHistory];
+  // --- WALLET ---
+  /** Submits a top-up for review. Credits appear only after a super admin approves it. */
+  public async requestTopUp(input: {
+    method: string;
+    credits: number;
+    reference_id: string;
+    sender_info?: string;
+    notes?: string;
+    extra?: Record<string, string>;
+  }): Promise<ActionResult & { topupId?: number }> {
+    if (!this.isAuthenticated()) {
+      this.requestLogin();
+      return { success: false, message: 'Sign in to add credits.' };
     }
-
-    safeSet(STORAGE_KEYS.USER, this.user);
-    this.notify();
-  }
-
-  // --- FAVORITES TOGGLE ---
-  public toggleFavorite(itemId: string): boolean {
-    const exists = this.user.favorites.includes(itemId);
-    if (exists) {
-      this.user.favorites = this.user.favorites.filter(id => id !== itemId);
-    } else {
-      this.user.favorites = [...this.user.favorites, itemId];
-    }
-    safeSet(STORAGE_KEYS.USER, this.user);
-    this.notify();
-    return !exists;
-  }
-
-  // --- REVIEWS & RATINGS ---
-  public addReview(targetId: string, rating: number, comment: string): Review {
-    const review: Review = {
-      id: 'rev_' + Date.now(),
-      targetId,
-      userId: this.user.id,
-      userName: this.user.name,
-      rating,
-      comment,
-      createdAt: new Date().toISOString(),
-      verifiedPurchase: this.user.unlockedVideoIds.includes(targetId) || this.user.unlockedPackIds.includes(targetId)
+    const body = {
+      method: input.method,
+      credits: input.credits,
+      reference_id: input.reference_id,
+      sender_info: input.sender_info,
+      notes: input.notes,
+      ...(input.extra ?? {}),
     };
-
-    this.reviews = [review, ...this.reviews];
-    safeSet(STORAGE_KEYS.REVIEWS, this.reviews);
-    this.notify();
-    return review;
+    const result = await this.run('requestTopUp', () => api.wallet.requestTopUp(body));
+    if (!result) return this.fail();
+    await this.loadPersonal(null);
+    return { success: true, message: result.message || `Top-up ${input.reference_id} is pending review.`, topupId: result.topup_id };
   }
 
-  // --- REPORT CONTENT ---
-  public submitReport(targetId: string, targetTitle: string, targetType: 'video' | 'pack', reason: ContentReport['reason'], details: string): ContentReport {
-    const report: ContentReport = {
-      id: 'rep_' + Date.now(),
-      targetId,
-      targetTitle,
-      targetType,
-      userId: this.user.id,
-      reason,
-      details,
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    };
-
-    this.reports = [report, ...this.reports];
-    safeSet(STORAGE_KEYS.REPORTS, this.reports);
-    this.notify();
-    return report;
+  public async validateCoupon(code: string, amount?: number): Promise<ActionResult & { bonusCredits?: number }> {
+    const result = await this.run('validateCoupon', () => api.wallet.validateCoupon(code, amount));
+    if (!result) return this.fail();
+    return { success: true, message: 'Coupon accepted.', bonusCredits: result.coupon.discount_credits };
   }
 
-  public resolveReport(reportId: string): void {
-    this.reports = this.reports.map(r => r.id === reportId ? { ...r, status: 'resolved' as const } : r);
-    safeSet(STORAGE_KEYS.REPORTS, this.reports);
-    this.notify();
-  }
-
-  // --- NOTIFICATIONS ---
-  public markAllNotificationsRead(): void {
+  public async markAllNotificationsRead(): Promise<void> {
+    await this.run('markAllRead', () => api.notifications.markAllRead());
     this.notifications = this.notifications.map(n => ({ ...n, read: true }));
-    safeSet(STORAGE_KEYS.NOTIFICATIONS, this.notifications);
     this.notify();
   }
 
-  // --- USER ROLE SWITCHER (FOR TESTING VIEW/ADMIN/SELLER EASILY) ---
-  public setUserRole(role: 'user' | 'admin' | 'seller'): void {
-    this.user.role = role;
-    safeSet(STORAGE_KEYS.USER, this.user);
+  public async submitReview(itemId: string, rating: number, comment: string): Promise<ActionResult> {
+    const result = await this.run('submitReview', () => api.catalogue.submitReview(Number(itemId), rating, comment));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Review saved.' };
+  }
+
+  // --- ADMIN ---
+  public async loadAdmin(): Promise<void> {
+    if (!this.isAdmin()) return;
+    const [stats, topups, uploads] = await Promise.all([
+      api.admin.stats().catch(() => null),
+      api.admin.topups().catch(() => null),
+      api.admin.uploads().catch(() => null),
+    ]);
+    if (stats) this.adminStats = stats.stats;
+    if (topups) this.pendingTopups = topups.topups;
+    if (uploads) this.uploads = uploads.assets;
     this.notify();
   }
 
-  // --- ADMIN: VIDEO CRUD ---
-  public addVideo(videoData: Omit<Video, 'id' | 'views' | 'rating' | 'publishedAt'>): Video {
-    const id = 'vid-' + (100 + this.videos.length + 1);
-    const newVideo: Video = {
-      ...videoData,
-      id,
-      rating: 5.0,
-      views: 0,
-      publishedAt: new Date().toISOString().split('T')[0]
+  public async uploadFile(file: File, kind: string, productId: number | null, onProgress?: (percent: number) => void): Promise<MediaAsset | null> {
+    this.statusMessage = `Uploading ${file.name}…`;
+    this.notify();
+    const asset = await this.run('upload', () => api.admin.upload(file, kind, productId, percent => {
+      this.statusMessage = `Uploading ${file.name}… ${percent}%`;
+      this.notify();
+    }));
+    this.statusMessage = null;
+    this.notify();
+    if (asset) await this.loadAdmin();
+    return asset;
+  }
+
+  /** Creates (or extends) a streamable product from an actual uploaded file. */
+  public async publishVideo(form: {
+    title: string;
+    description: string;
+    category: string;
+    price: number;
+    status?: string;
+    access_duration_type?: string;
+    demo_url?: string;
+    thumbnail?: string;
+    tags?: string;
+    videoFile?: File | null;
+    videoDurationSeconds?: number;
+    previewFile?: File | null;
+    posterFile?: File | null;
+    attachToProductId?: number;
+  }): Promise<ActionResult & { productId?: number }> {
+    if (!form.title.trim()) return { success: false, message: 'A title is required.' };
+
+    let streamUrl: string | null = null;
+    if (form.videoFile) {
+      const asset = await this.uploadFile(form.videoFile, 'VIDEO', form.attachToProductId ?? null);
+      if (!asset) return this.fail();
+      streamUrl = asset.url;
+    }
+    if (form.previewFile) {
+      const asset = await this.uploadFile(form.previewFile, 'VIDEO', form.attachToProductId ?? null);
+      if (!asset) return this.fail();
+      form = { ...form, demo_url: asset.url };
+    }
+    if (form.posterFile) {
+      const asset = await this.uploadFile(form.posterFile, 'IMAGE', form.attachToProductId ?? null);
+      if (!asset) return this.fail();
+      form = { ...form, thumbnail: asset.url };
+    }
+    if (!streamUrl && !form.demo_url) {
+      return { success: false, message: 'Attach the video file you want viewers to watch.' };
+    }
+
+    const payload: AdminProductPayload = {
+      title: form.title.trim(),
+      description: form.description,
+      price: Number(form.price) || 0,
+      category: form.category,
+      thumbnail: form.thumbnail || undefined,
+      tags: form.tags,
+      status: form.status ?? 'PUBLISHED',
+      access_duration_type: form.access_duration_type ?? 'LIFETIME',
+      demo_type: form.demo_url ? 'VIDEO' : undefined,
+      demo_url: form.demo_url || undefined,
+      premium_type: 'VIDEO',
+      premium_resource_url: streamUrl ?? undefined,
+      rights_confirmed: true,
+      lessons: streamUrl
+        ? [
+            {
+              title: form.title.trim(),
+              video_url: streamUrl,
+              video_provider: 'UPLOAD',
+              is_free_preview: 0,
+              duration_seconds: Math.floor(Number(form.videoDurationSeconds) || 0) || 600
+            }
+          ]
+        : undefined,
     };
-    if (!newVideo.thumbnail) {
-      newVideo.thumbnail = generateThumbnailSvg(newVideo.title, newVideo.category, 'purple', '▶');
+
+    const result = form.attachToProductId
+      ? await this.run('updateProduct', () => api.admin.updateProduct(form.attachToProductId!, payload))
+      : await this.run('createProduct', () => api.admin.createProduct(payload));
+    if (!result) return this.fail();
+
+    const productId = result.product_id;
+    await this.refreshCatalogue();
+    return { success: true, message: `“${payload.title}” is live.`, productId };
+  }
+
+  /**
+   * Creates a marketplace pack. Everything the buyer can see before paying (preview photos,
+   * the master demo clip) is written as DEMO access media; the paid content is written as
+   * lessons (videos that play in the site) and files (downloads), and only ever reaches a
+   * browser through /api/content/:id/access.
+   */
+  public async publishPack(form: {
+    title: string;
+    description: string;
+    category: string;
+    price: number;
+    status?: string;
+    access_duration_type?: string;
+    files?: File[];
+    videoFiles?: { file: File; durationSeconds: number }[];
+    photoFiles?: File[];
+    demoVideoFile?: File | null;
+    links?: { provider: string; url: string; label: string }[];
+    attachToProductId?: number;
+  }): Promise<ActionResult & { productId?: number }> {
+    if (!form.title.trim()) return { success: false, message: 'A title is required.' };
+    const chosen = form.files ?? [];
+    const videos = form.videoFiles ?? [];
+    const photos = form.photoFiles ?? [];
+    const links = (form.links ?? [])
+      .map(l => ({ provider: String(l.provider ?? '').trim(), url: String(l.url ?? '').trim(), label: String(l.label ?? '').trim() }))
+      .filter(l => l.url.length > 0);
+    if (chosen.length === 0 && videos.length === 0 && links.length === 0) {
+      return { success: false, message: 'Attach at least one file, video or delivery link to sell.' };
     }
-    if (!newVideo.backdrop) {
-      newVideo.backdrop = newVideo.thumbnail;
+    const badLink = links.find(l => !/^https?:\/\/.+\..+/i.test(l.url) && !l.url.startsWith('tg://'));
+    if (badLink) return { success: false, message: `“${badLink.url}” is not a full https:// link. Paste the complete invite or folder address.` };
+
+    const deliverables: Record<string, unknown>[] = [];
+    for (const file of chosen) {
+      const isArchive = /\.(zip|rar|7z|tar|gz)$/i.test(file.name);
+      const asset = await this.uploadFile(file, isArchive ? 'ARCHIVE' : 'DOCUMENT', form.attachToProductId ?? null);
+      if (!asset) return this.fail();
+      deliverables.push({
+        url: asset.url,
+        label: asset.file_name,
+        caption: asset.file_name,
+        media_type: 'DOWNLOAD',
+        provider: 'UPLOAD',
+        size_bytes: asset.size_bytes,
+        access_level: 'PREMIUM',
+      });
     }
 
-    this.videos = [newVideo, ...this.videos];
-    safeSet(STORAGE_KEYS.VIDEOS, this.videos);
-    this.notify();
-    return newVideo;
-  }
+    const lessons: Record<string, unknown>[] = [];
+    for (let i = 0; i < videos.length; i++) {
+      const { file, durationSeconds } = videos[i];
+      const asset = await this.uploadFile(file, 'VIDEO', form.attachToProductId ?? null);
+      if (!asset) return this.fail();
+      lessons.push({
+        title: file.name.replace(/\.[^.]+$/, ''),
+        video_url: asset.url,
+        video_provider: 'UPLOAD',
+        is_free_preview: 0,
+        duration_seconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? Math.floor(durationSeconds) : 0,
+        sort_order: i + 1,
+      });
+    }
 
-  public updateVideo(id: string, updates: Partial<Video>): void {
-    this.videos = this.videos.map(v => v.id === id ? { ...v, ...updates } : v);
-    safeSet(STORAGE_KEYS.VIDEOS, this.videos);
-    this.notify();
-  }
+    const demo_media: Record<string, unknown>[] = [];
+    for (let i = 0; i < photos.length; i++) {
+      const asset = await this.uploadFile(photos[i], 'IMAGE', form.attachToProductId ?? null);
+      if (!asset) return this.fail();
+      demo_media.push({ url: asset.url, caption: photos[i].name, label: `Preview #${i + 1}`, sort_order: i + 1 });
+    }
 
-  public deleteVideo(id: string): void {
-    this.videos = this.videos.filter(v => v.id !== id);
-    safeSet(STORAGE_KEYS.VIDEOS, this.videos);
-    this.notify();
-  }
+    let demo_url: string | undefined;
+    if (form.demoVideoFile) {
+      const asset = await this.uploadFile(form.demoVideoFile, 'VIDEO', form.attachToProductId ?? null);
+      if (!asset) return this.fail();
+      demo_url = asset.url;
+    }
 
-  // --- ADMIN: PACK CRUD ---
-  public addPack(packData: Omit<DigitalPack, 'id' | 'rating' | 'salesCount' | 'publishedAt'>): DigitalPack {
-    const id = 'pack-' + (200 + this.packs.length + 1);
-    const newPack: DigitalPack = {
-      ...packData,
-      id,
-      rating: 5.0,
-      salesCount: 0,
-      publishedAt: new Date().toISOString().split('T')[0]
+    const linkRows = links.map((l, i) => ({
+      url: l.url,
+      media_type: 'EXTERNAL_LINK',
+      provider: l.provider,
+      label: l.label || l.provider,
+      caption: l.label || l.provider,
+      size_bytes: 0,
+      access_level: 'PREMIUM',
+      sort_order: deliverables.length + i + 1,
+    }));
+
+    const payload: AdminProductPayload = {
+      title: form.title.trim(),
+      description: form.description,
+      price: Number(form.price) || 0,
+      category: form.category,
+      status: form.status ?? 'PUBLISHED',
+      access_duration_type: form.access_duration_type ?? '30_DAYS',
+      premium_type: 'DIGITAL_RESOURCE',
+      rights_confirmed: true,
+      demo_type: demo_url ? 'VIDEO' : undefined,
+      demo_url,
+      lessons: lessons.length ? lessons : undefined,
+      files: deliverables.length || linkRows.length ? [...deliverables, ...linkRows] : undefined,
+      demo_media: demo_media.length ? demo_media : undefined,
     };
-    if (!newPack.coverImage) {
-      newPack.coverImage = generateThumbnailSvg(newPack.title, newPack.platform, 'ruby', '▣');
+
+    const result = form.attachToProductId
+      ? await this.run('updatePack', () => api.admin.updateProduct(form.attachToProductId!, payload))
+      : await this.run('createPack', () => api.admin.createProduct(payload));
+    if (!result) return this.fail();
+
+    await this.refreshCatalogue();
+    const parts = [
+      lessons.length ? `${lessons.length} in-pack video(s)` : null,
+      deliverables.length ? `${deliverables.length} file(s)` : null,
+      linkRows.length ? `${linkRows.length} delivery link(s)` : null,
+      demo_media.length ? `${demo_media.length} preview photo(s)` : null,
+      demo_url ? 'a master demo' : null,
+    ].filter(Boolean);
+    return {
+      success: true,
+      message: `“${payload.title}” published with ${parts.join(', ')}.`,
+      productId: result.product_id,
+    };
+  }
+
+  /**
+   * Sets the clip a shopper watches before paying: cut from the paid video, an uploaded file of
+   * the admin's own, or nothing at all. The server does the cutting, so a trimmed preview never
+   * depends on the browser, and its reasons come back in plain words when it cannot.
+   */
+  public async generatePreview(form: {
+    productId: number;
+    mode: 'trim' | 'upload' | 'none';
+    durationSeconds?: number;
+    startSeconds?: number;
+    file?: File | null;
+  }): Promise<ActionResult> {
+    if (form.mode === 'upload') {
+      if (!form.file) return { success: false, message: 'Choose the preview video you want to attach.' };
+      const asset = await this.uploadFile(form.file, 'VIDEO', form.productId);
+      if (!asset) return this.fail();
+      const attached = await this.run('attachPreview', () =>
+        api.admin.setPreview(form.productId, { mode: 'upload', asset_id: asset.id })
+      );
+      if (!attached) return this.fail();
+      await this.refreshCatalogue();
+      return { success: true, message: attached.message || 'Your clip is now the preview.' };
     }
 
-    this.packs = [newPack, ...this.packs];
-    safeSet(STORAGE_KEYS.PACKS, this.packs);
-    this.notify();
-    return newPack;
+    const result = await this.run('preview', () =>
+      api.admin.setPreview(form.productId, {
+        mode: form.mode,
+        duration_seconds: form.durationSeconds,
+        start_seconds: form.startSeconds
+      })
+    );
+    if (!result) return this.fail();
+    await this.refreshCatalogue();
+    return { success: true, message: result.message || 'Preview updated.' };
   }
 
-  public updatePack(id: string, updates: Partial<DigitalPack>): void {
-    this.packs = this.packs.map(p => p.id === id ? { ...p, ...updates } : p);
-    safeSet(STORAGE_KEYS.PACKS, this.packs);
-    this.notify();
+  public async setPrice(itemId: string, price: number): Promise<ActionResult> {
+    const item = this.getVideo(itemId) ?? this.getPack(itemId);
+    if (!item) return { success: false, message: 'Item not found in the catalogue.' };
+    const chosen = Math.max(0, Math.floor(Number(price) || 0));
+    const result = await this.run('setPrice', () => api.admin.updateProduct(item.productId, { price: chosen }));
+    if (!result) return this.fail();
+    await this.refreshCatalogue();
+    return { success: true, message: `“${item.title}” now costs ${chosen} credits.` };
   }
 
-  public deletePack(id: string): void {
-    this.packs = this.packs.filter(p => p.id !== id);
-    safeSet(STORAGE_KEYS.PACKS, this.packs);
-    this.notify();
+  public async deleteProduct(productId: number): Promise<ActionResult> {    const result = await this.run('deleteProduct', () => api.admin.deleteProduct(productId));
+    if (!result) return this.fail();
+    this.accessCache.delete(productId);
+    await this.refreshCatalogue();
+    return { success: true, message: result.message || 'Removed from the catalogue.' };
   }
 
-  // --- SEO UPDATE ---
-  public updateSEO(updates: Partial<SEOSettings>): void {
-    this.seo = { ...this.seo, ...updates };
-    safeSet(STORAGE_KEYS.SEO, this.seo);
-    this.notify();
-  }
-
-  // --- RESET DEMO DATA ---
-  public resetData(): void {
-    this.videos = INITIAL_VIDEOS;
-    this.packs = INITIAL_PACKS;
-    this.user = INITIAL_USER;
-    this.transactions = INITIAL_TRANSACTIONS;
-    this.reviews = [];
-    this.reports = [];
-    this.notifications = INITIAL_NOTIFICATIONS;
-    this.seo = INITIAL_SEO;
-    this.persist();
+  public async loadTopups(status?: string): Promise<void> {
+    const result = await this.run('loadTopups', () => api.admin.topups(status));
+    if (!result) return;
+    this.pendingTopups = result.topups;
     this.notify();
   }
 
-  private persist(): void {
-    safeSet(STORAGE_KEYS.VIDEOS, this.videos);
-    safeSet(STORAGE_KEYS.PACKS, this.packs);
-    safeSet(STORAGE_KEYS.USER, this.user);
-    safeSet(STORAGE_KEYS.TRANSACTIONS, this.transactions);
-    safeSet(STORAGE_KEYS.NOTIFICATIONS, this.notifications);
+  public async approveTopup(id: number): Promise<ActionResult> {
+    if (!this.isSuperAdmin()) return { success: false, message: 'Only the owner account can approve top-ups.' };
+    const result = await this.run('approveTopup', () => api.admin.approveTopup(id));
+    if (!result) return this.fail();
+    await Promise.all([this.loadTopups(), this.loadAdmin()]);
+    return { success: true, message: result.message || 'Top-up approved and credited.' };
+  }
+
+  public async rejectTopup(id: number, reason?: string): Promise<ActionResult> {
+    if (!this.isSuperAdmin()) return { success: false, message: 'Only the owner account can reject top-ups.' };
+    const result = await this.run('rejectTopup', () => api.admin.rejectTopup(id, reason));
+    if (!result) return this.fail();
+    await this.loadTopups();
+    return { success: true, message: result.message || 'Top-up rejected.' };
+  }
+
+  public async deleteUpload(assetId: number): Promise<ActionResult> {
+    const result = await this.run('deleteUpload', () => api.admin.deleteUpload(assetId));
+    if (!result) return this.fail();
+    await this.loadAdmin();
+    return { success: true, message: result.message || 'File removed from disk.' };
+  }
+
+  public async loadPlatformSettings(): Promise<PlatformSettingRow[]> {
+    const result = await this.run('loadPlatformSettings', () => api.admin.settings());
+    return result?.settings ?? [];
+  }
+
+  public async savePlatformSettings(settings: Record<string, string>): Promise<ActionResult> {
+    const result = await this.run('savePlatformSettings', () => api.admin.saveSettings(settings));
+    if (!result) return this.fail();
+    await this.loadSupport();
+    return { success: true, message: result.message || 'Settings saved.' };
+  }
+
+  public async loadCategories(): Promise<{ id: number; name: string; slug: string; product_count?: number }[]> {
+    const result = await this.run('loadCategories', () => api.admin.categories());
+    return result?.categories ?? [];
+  }
+
+  public async createCategory(name: string): Promise<ActionResult> {
+    const result = await this.run('createCategory', () => api.admin.createCategory({ name }));
+    if (!result) return this.fail();
+    return { success: true, message: `Category “${result.category.name}” added.` };
   }
 }
 

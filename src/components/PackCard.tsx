@@ -1,7 +1,7 @@
 import React from 'react';
 import { DigitalPack } from '../types';
-import { store } from '../services/store';
-import { Cloud, HardDrive, Send, MessageCircle, Play, CheckCircle, Package } from 'lucide-react';
+import { humanBytes } from '../services/mappers';
+import { Cloud, HardDrive, Send, MessageCircle, CheckCircle, Package, PlayCircle } from 'lucide-react';
 
 interface PackCardProps {
   pack: DigitalPack;
@@ -48,7 +48,7 @@ export const PackCard: React.FC<PackCardProps> = ({ pack, onOpen, isUnlocked }) 
             <span className="text-[11px]">{pack.platform}</span>
           </div>
 
-          {/* Size / Status Badge */}
+          {/* Price / Status Badge */}
           <div className="absolute top-2.5 right-2.5">
             {isUnlocked ? (
               <span className="text-[10px] font-black uppercase tracking-wider bg-purple-600 text-white px-2 py-0.5 rounded-md shadow-sm flex items-center gap-1">
@@ -62,18 +62,21 @@ export const PackCard: React.FC<PackCardProps> = ({ pack, onOpen, isUnlocked }) 
             )}
           </div>
 
-          {/* Master Demo Available Indicator */}
-          {pack.masterDemoVideoId && (
-            <div className="absolute bottom-2.5 left-2.5 z-10 flex items-center gap-1 bg-pink-950/80 backdrop-blur-md border border-pink-500/40 text-pink-200 text-[10px] font-bold px-2 py-0.5 rounded-md">
-              <Play className="w-2.5 h-2.5 fill-pink-300" />
-              Master Demo Available
+          {/* Size / File-count Badge (real values only) */}
+          <div className="absolute bottom-2.5 right-2.5 z-10 bg-black/80 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded-md tabular-nums">
+            {pack.videoCount > 0
+              ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}${pack.fileCount > 0 ? ` + ${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}` : ''}`
+              : pack.totalBytes > 0
+                ? humanBytes(pack.totalBytes)
+                : `${pack.fileCount} files`}
+          </div>
+
+          {pack.videoCount > 0 && (
+            <div className="absolute bottom-2.5 left-2.5 z-10 flex items-center gap-1 bg-purple-600/90 text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md">
+              <PlayCircle className="w-3 h-3" />
+              Plays in-site
             </div>
           )}
-
-          {/* File Size Badge */}
-          <div className="absolute bottom-2.5 right-2.5 z-10 bg-black/80 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded-md tabular-nums">
-            {pack.fileSize}
-          </div>
         </div>
 
         {/* Card Info */}
@@ -81,7 +84,11 @@ export const PackCard: React.FC<PackCardProps> = ({ pack, onOpen, isUnlocked }) 
           <div className="flex items-center gap-2 text-[11px] text-slate-400">
             <span className="text-purple-300 font-semibold">{pack.category}</span>
             <span>·</span>
-            <span>{pack.itemCount} files included</span>
+            <span>
+              {pack.videoCount > 0
+                ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}`
+                : `${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}`}
+            </span>
             <span>·</span>
             <span>★ {pack.rating.toFixed(1)}</span>
           </div>
@@ -102,7 +109,7 @@ export const PackCard: React.FC<PackCardProps> = ({ pack, onOpen, isUnlocked }) 
           {pack.salesCount} purchases
         </span>
         <span className="text-purple-400 font-bold group-hover:text-purple-300 group-hover:underline">
-          {isUnlocked ? 'Access Files →' : `Unlock (${pack.creditPrice} CR) →`}
+          {isUnlocked ? 'View Files →' : `Unlock (${pack.creditPrice} CR) →`}
         </span>
       </div>
     </div>

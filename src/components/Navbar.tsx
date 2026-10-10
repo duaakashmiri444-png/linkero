@@ -34,11 +34,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [user, setUser] = useState<User>(store.getUser());
   const [notifications, setNotifications] = useState<NotificationItem[]>(store.getNotifications());
   const [showNotifMenu, setShowNotifMenu] = useState(false);
-  const [showRoleMenu, setShowRoleMenu] = useState(false);
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [searchSuggestions, setSearchSuggestions] = useState<{ id: string; title: string; type: 'video' | 'pack'; meta: string; price: number }[]>([]);
   const notifRef = useRef<HTMLDivElement>(null);
-  const roleRef = useRef<HTMLDivElement>(null);
+  const accountRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return store.subscribe(() => {
@@ -53,8 +53,8 @@ export const Navbar: React.FC<NavbarProps> = ({
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
         setShowNotifMenu(false);
       }
-      if (roleRef.current && !roleRef.current.contains(e.target as Node)) {
-        setShowRoleMenu(false);
+      if (accountRef.current && !accountRef.current.contains(e.target as Node)) {
+        setShowAccountMenu(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -76,12 +76,14 @@ export const Navbar: React.FC<NavbarProps> = ({
     const packs = store.getPacks()
       .filter(p => p.title.toLowerCase().includes(q) || p.platform.toLowerCase().includes(q))
       .slice(0, 3)
-      .map(p => ({ id: p.id, title: p.title, type: 'pack' as const, meta: `${p.platform} · ${p.fileSize}`, price: p.creditPrice }));
+      .map(p => ({ id: p.id, title: p.title, type: 'pack' as const, meta: `${p.platform} · ${p.fileCount} files`, price: p.creditPrice }));
 
     setSearchSuggestions([...videos, ...packs]);
   }, [searchInput]);
 
   const unreadNotifs = notifications.filter(n => !n.read).length;
+  const isAdminRole = user.role === 'ADMIN' || user.role === 'SUPER_ADMIN';
+  const accountInitials = user.name ? user.name.slice(0, 2).toUpperCase() : '–';
 
   return (
     <header className="sticky top-0 z-40 bg-[#090a12]/90 backdrop-blur-xl border-b border-white/[0.08] px-4 md:px-8 py-3.5">
@@ -139,7 +141,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </span>
             )}
           </button>
-          {user.role === 'admin' && (
+          {isAdminRole && (
             <button
               onClick={() => setActiveTab('admin')}
               className={`whitespace-nowrap transition-colors text-amber-400 hover:text-amber-300 py-1 flex items-center gap-1 ${activeTab === 'admin' ? 'border-b-2 border-amber-400 font-bold' : ''}`}
@@ -279,59 +281,83 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </div>
 
-          {/* User profile & role switcher */}
-          <div className="relative" ref={roleRef}>
+          {/* Account menu: real session only — no role switching */}
+          <div className="relative" ref={accountRef}>
             <button
-              onClick={() => setShowRoleMenu(!showRoleMenu)}
-              className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-pink-500 flex items-center justify-center text-xs font-black text-white hover:opacity-90 ring-2 ring-white/10 focus:outline-none"
-              title="Profile & Role"
+              onClick={() => setShowAccountMenu(!showAccountMenu)}
+              className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-pink-500 flex items-center justify-center text-xs font-black text-white hover:opacity-90 ring-2 ring-white/10 focus:outline-none overflow-hidden"
+              title={user.role === 'guest' ? 'Sign in' : 'Account'}
             >
-              {user.avatar}
+              {user.avatar ? (
+                <img src={user.avatar} alt="" className="w-full h-full object-cover" />
+              ) : (
+                accountInitials
+              )}
             </button>
 
-            {showRoleMenu && (
+            {showAccountMenu && (
               <div className="absolute right-0 top-full mt-2 w-64 bg-[#121422] border border-white/15 rounded-2xl shadow-2xl p-3 z-50">
-                <div className="px-2 py-1.5 border-b border-white/10 mb-2">
-                  <div className="font-bold text-sm text-white">{user.name}</div>
-                  <div className="text-[11px] text-slate-400 truncate">{user.email}</div>
-                  <div className="mt-1 flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1.5 py-0.5 rounded uppercase">
-                      {user.role}
-                    </span>
-                    <span className="text-[10px] text-amber-400 font-semibold">
-                      VIP Monthly
-                    </span>
+                {user.role === 'guest' ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-400 px-1 py-1">
+                      Sign in to unlock videos, keep your library and top up credits.
+                    </p>
+                    <button
+                      onClick={() => {
+                        store.requestLogin();
+                        setShowAccountMenu(false);
+                      }}
+                      className="w-full rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 text-xs"
+                    >
+                      Sign in / Create account
+                    </button>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="px-2 py-1.5 border-b border-white/10 mb-2">
+                      <div className="font-bold text-sm text-white">{user.name}</div>
+                      <div className="text-[11px] text-slate-400 truncate">{user.email}</div>
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1.5 py-0.5 rounded uppercase">
+                          {user.role === 'SUPER_ADMIN' ? 'Owner' : user.role === 'ADMIN' ? 'Staff' : 'Viewer'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-semibold">{user.walletBalance} credits</span>
+                      </div>
+                    </div>
 
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
-                  Switch Role Mode
-                </div>
-                {(['user', 'admin', 'seller'] as const).map(role => (
-                  <button
-                    key={role}
-                    onClick={() => {
-                      store.setUserRole(role);
-                      setShowRoleMenu(false);
-                    }}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition-colors ${user.role === role ? 'bg-purple-900/30 text-purple-300 font-bold' : 'text-slate-300 hover:bg-white/5'}`}
-                  >
-                    <span className="capitalize">{role === 'user' ? 'Regular Viewer' : role === 'admin' ? 'Administrator' : 'Creator / Seller'}</span>
-                    {user.role === role && <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />}
-                  </button>
-                ))}
+                    <button
+                      onClick={() => {
+                        onOpenWallet();
+                        setShowAccountMenu(false);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-white/5"
+                    >
+                      Add credits
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab('library');
+                        setShowAccountMenu(false);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-white/5"
+                    >
+                      My library
+                    </button>
 
-                <div className="border-t border-white/10 mt-2 pt-2">
-                  <button
-                    onClick={() => {
-                      store.resetData();
-                      setShowRoleMenu(false);
-                    }}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-rose-400 hover:bg-rose-950/20"
-                  >
-                    Reset Demo State
-                  </button>
-                </div>
+                    <div className="border-t border-white/10 mt-2 pt-2">
+                      <button
+                        onClick={async () => {
+                          await store.logout();
+                          setShowAccountMenu(false);
+                          setActiveTab('home');
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-rose-400 hover:bg-rose-950/20"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -377,7 +403,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <Bookmark className="w-4 h-4" />
           <span className="text-[10px] mt-0.5">Library</span>
         </button>
-        {user.role === 'admin' && (
+        {isAdminRole && (
           <button
             onClick={() => setActiveTab('admin')}
             className={`flex flex-col items-center py-1 ${activeTab === 'admin' ? 'text-amber-400 font-bold' : 'text-slate-400'}`}

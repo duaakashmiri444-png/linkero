@@ -37,7 +37,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
       if (categoryFilter !== 'all' && v.category !== categoryFilter) return false;
 
       if (!q) return true;
-      const haystack = `${v.title} ${v.description} ${v.category} ${v.creator.name} ${v.tags.join(' ')}`.toLowerCase();
+      const haystack = `${v.title} ${v.description} ${v.category} ${v.tags.join(' ')}`.toLowerCase();
       return haystack.includes(q);
     });
 
@@ -48,7 +48,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
       if (categoryFilter !== 'all' && p.category !== categoryFilter) return false;
 
       if (!q) return true;
-      const haystack = `${p.title} ${p.description} ${p.platform} ${p.category} ${p.includedItems.join(' ')}`.toLowerCase();
+      const haystack = `${p.title} ${p.description} ${p.platform} ${p.category}`.toLowerCase();
       return haystack.includes(q);
     });
 
@@ -68,7 +68,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
           <Search className="w-5 h-5 text-purple-400 mr-3 shrink-0" />
           <input
             type="text"
-            placeholder="Search videos, creators, categories, MEGA packs, Telegram channels..."
+            placeholder="Search videos, categories, packs, delivery platforms..."
             value={query}
             onChange={e => setQuery(e.target.value)}
             autoFocus
@@ -133,7 +133,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({
           <div className="text-center py-20 bg-[#121422]/60 border border-white/10 rounded-3xl p-8 space-y-2">
             <p className="text-slate-300 text-base font-semibold">No results found for "{query}"</p>
             <p className="text-slate-400 text-xs max-w-sm mx-auto">
-              Try searching by topic like "Pakistani", "Indian", "ABACS", "MEGA", or "Dance".
+              Try a different keyword or relax the filters above.
             </p>
           </div>
         ) : (

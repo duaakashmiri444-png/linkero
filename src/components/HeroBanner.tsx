@@ -40,7 +40,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
             <span className="flex items-center gap-1 text-purple-300 bg-purple-500/20 border border-purple-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider font-bold">
               <Sparkles className="w-3 h-3 text-purple-400" />
-              Featured Master Cut
+              Featured
             </span>
             <span className="text-slate-400">·</span>
             <span className="text-slate-300">{featuredVideo.category}</span>
@@ -59,11 +59,6 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           </p>
 
           <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
-            <span>By <strong className="text-white">{featuredVideo.creator.name}</strong></span>
-            {featuredVideo.creator.verified && (
-              <span className="text-purple-400 font-bold">✓ Verified Creator</span>
-            )}
-            <span>·</span>
             <span>{featuredVideo.views.toLocaleString()} viewers</span>
           </div>
 
@@ -74,7 +69,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold px-6 py-3 rounded-xl text-sm flex items-center gap-2.5 shadow-lg shadow-purple-900/40 hover:scale-[1.02] active:scale-[0.99] transition-all"
             >
               <Play className="w-4 h-4 fill-white" />
-              {isUnlocked ? 'Watch Full Video' : 'Watch Preview (20s Free)'}
+              {isUnlocked ? 'Watch Full Video' : featuredVideo.previewUrl ? 'Watch Free Preview' : 'Open'}
             </button>
 
             {!isUnlocked && !featuredVideo.isFree && (

@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Video, DigitalPack, User } from '../types';
 import { VideoCard } from './VideoCard';
-import { PackCard } from './PackCard';
-import { Play, Sparkles, Filter, CheckCircle2 } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 
 interface DemoRoomProps {
   videos: Video[];
@@ -14,24 +13,23 @@ interface DemoRoomProps {
 
 export const DemoRoom: React.FC<DemoRoomProps> = ({
   videos,
-  packs,
   user,
-  onOpenVideo,
-  onOpenPack
+  onOpenVideo
 }) => {
-  const [filterType, setFilterType] = useState<'all' | 'free' | 'preview' | 'master'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'free' | 'preview'>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'featured' | 'newest' | 'price_low' | 'price_high' | 'views'>('featured');
 
-  // Filter videos that have demo features:
+  // Categories are whatever the published products actually carry.
+  const categories = Array.from(new Set(videos.map(v => v.category))).sort();
+
+  // Demo videos:
   // - free videos
-  // - paid preview videos
-  // - master demo videos
+  // - paid videos that ship a server-provided preview clip (products.demo_url)
   const demoVideos = videos.filter(v => {
     // Type filter
     if (filterType === 'free' && !v.isFree) return false;
-    if (filterType === 'preview' && (v.isFree || v.isMasterDemo)) return false;
-    if (filterType === 'master' && !v.isMasterDemo) return false;
+    if (filterType === 'preview' && (v.isFree || !v.previewUrl)) return false;
 
     // Category filter
     if (selectedCategory !== 'all' && v.category !== selectedCategory) return false;
@@ -48,9 +46,6 @@ export const DemoRoom: React.FC<DemoRoomProps> = ({
     return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
   });
 
-  // Master demo packs
-  const masterPacks = packs.filter(p => p.masterDemoVideoId);
-
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
       
@@ -65,7 +60,7 @@ export const DemoRoom: React.FC<DemoRoomProps> = ({
             The Demo Room
           </h1>
           <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
-            Test and preview content risk-free. Free videos stream completely without deductions. Paid previews showcase real footage before purchasing. Master demos inspect multi-gigabyte digital packs.
+            Test and preview content risk-free. Free videos stream completely without deductions. Paid previews showcase the real demo clip before purchasing.
           </p>
         </div>
       </div>
@@ -79,12 +74,11 @@ export const DemoRoom: React.FC<DemoRoomProps> = ({
             {[
               { id: 'all', label: 'All Demos' },
               { id: 'free', label: '100% Free Videos' },
-              { id: 'preview', label: 'Paid Video Previews' },
-              { id: 'master', label: 'Master Pack Demos' }
+              { id: 'preview', label: 'Paid Video Previews' }
             ].map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setFilterType(tab.id as any)}
+                onClick={() => setFilterType(tab.id as 'all' | 'free' | 'preview')}
                 className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${filterType === tab.id ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
               >
                 {tab.label}
@@ -101,13 +95,9 @@ export const DemoRoom: React.FC<DemoRoomProps> = ({
               aria-label="Filter category"
             >
               <option value="all">All Categories</option>
-              <option value="Pakistani">Pakistani</option>
-              <option value="Indian">Indian</option>
-              <option value="TikTok Creators">TikTok Creators</option>
-              <option value="Models & Creators">Models & Creators</option>
-              <option value="Trending ABACS">Trending ABACS</option>
-              <option value="Master Demos">Master Demos</option>
-              <option value="Other">Other</option>
+              {categories.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
             </select>
 
             <select
@@ -162,33 +152,6 @@ export const DemoRoom: React.FC<DemoRoomProps> = ({
           })}
         </div>
       )}
-
-      {/* Master Pack Demo Spotlight Row */}
-      {filterType === 'all' || filterType === 'master' ? (
-        <div className="pt-8 border-t border-white/10 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                Digital Packs With Master Demos
-              </h2>
-              <p className="text-xs text-slate-400">
-                Packs on MEGA, Google Drive, and Telegram with verified preview walkthroughs
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {masterPacks.map(pack => (
-              <PackCard
-                key={pack.id}
-                pack={pack}
-                onOpen={onOpenPack}
-                isUnlocked={user.unlockedPackIds.includes(pack.id)}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
 
     </div>
   );

@@ -1,68 +1,88 @@
-export type CategoryType = 
-  | 'Pakistani'
-  | 'Indian'
-  | 'TikTok Creators'
-  | 'Models & Creators'
-  | 'Trending ABACS'
-  | 'Master Demos'
-  | 'Other';
+import type { AccessState, MediaRow, PaymentProvider, TopupRow, TransactionRow } from './services/api';
 
-export type PlatformType =
-  | 'Telegram'
-  | 'MEGA'
-  | 'Google Drive'
-  | 'WhatsApp'
-  | 'Inbuilt Player'
-  | 'Other';
+/**
+ * Types mirror what the Desi Ero API actually returns. Anything the backend does not
+ * model (creator identity, a per-video preview trim, membership tiers) has been removed
+ * rather than invented.
+ */
 
-export interface Creator {
-  name: string;
-  handle: string;
-  avatar: string;
-  verified?: boolean;
-}
+export type CategoryType = string;
+
+/** Delivery channel label, derived from the product's premium_type + link providers. */
+export type PlatformType = string;
 
 export interface Video {
-  id: string;
+  productId: number;
+  id: string; // productId as string; existing components key off string ids
+  slug: string;
   title: string;
   description: string;
   thumbnail: string;
   backdrop: string;
-  videoUrl: string;
+  /** Free preview URL (products.demo_url). The full stream comes from /api/content/:id/access. */
+  previewUrl: string;
+  /** Set once the viewer holds access; never populated from a list response. */
+  streamUrl: string | null;
   duration: string;
   durationSeconds: number;
   isFree: boolean;
   creditPrice: number;
-  previewTrimSeconds: number; // e.g. 15, 30s preview for paid videos
   category: CategoryType;
   tags: string[];
-  creator: Creator;
   rating: number;
+  ratingCount: number;
   views: number;
   publishedAt: string;
+  status: string;
+  access: AccessState | null;
+  lessonCount: number;
+  isFavorite?: boolean;
   isFeatured?: boolean;
   isTrending?: boolean;
   isNewRelease?: boolean;
-  isMasterDemo?: boolean;
-  linkedPackId?: string;
+}
+
+export interface PackVideo {
+  id: number;
+  title: string;
+  /** Stream URL — only ever present after an authorised access call. */
+  url: string;
+  durationSeconds: number;
 }
 
 export interface DigitalPack {
+  productId: number;
   id: string;
+  slug: string;
   title: string;
   description: string;
   coverImage: string;
   platform: PlatformType;
+  /** Every destination this pack delivers through — a MEGA+Drive bundle appears under both filters. */
+  platforms: string[];
   category: CategoryType;
-  fileSize: string; // e.g. "9 GB", "4.2 GB"
+  /** Real file count from product_media; replaces the old free-text "9.0 GB" field. */
+  fileCount: number;
+  totalBytes: number;
   creditPrice: number;
-  itemCount: number;
-  includedItems: string[];
-  masterDemoVideoId?: string;
-  accessUrl: string; // Protected delivery link
+  /** Deliverables, populated only after an authorised /api/content/:id/access call. */
+  files: MediaRow[];
+  /** Videos this pack delivers that play in the site player once unlocked. */
+  videoCount: number;
+  /** Free "master demo" clip (products.demo_url) any visitor can watch. */
+  demoUrl: string;
+  /** Preview photos and demo clips the owner attached; loaded from the product detail call. */
+  previewPhotos: MediaRow[];
+  previewClips: MediaRow[];
+  /** In-pack videos with playable URLs, populated only after an authorised access call. */
+  videos: PackVideo[];
   publishedAt: string;
+  status: string;
   rating: number;
+  ratingCount: number;
   salesCount: number;
+  access: AccessState | null;
+  isFavorite?: boolean;
   isFeatured?: boolean;
 }
 
@@ -71,16 +91,19 @@ export interface WatchProgress {
   progressSeconds: number;
   durationSeconds: number;
   lastWatchedAt: string;
+  completionPercent: number;
 }
 
+export type Role = 'guest' | 'USER' | 'ADMIN' | 'SUPER_ADMIN';
+
 export interface User {
-  id: string;
-  name: string;
+  id: number;
+  name: string; // users.username
   email: string;
   avatar: string;
-  role: 'user' | 'admin' | 'seller';
+  role: Role;
   walletBalance: number;
-  membershipTier: 'standard' | 'vip_monthly' | 'vip_yearly';
+  currency: string;
   unlockedVideoIds: string[];
   unlockedPackIds: string[];
   favorites: string[];
@@ -90,58 +113,25 @@ export interface User {
 export interface Transaction {
   id: string;
   reference: string;
-  userId: string;
-  type: 'deposit' | 'video_unlock' | 'pack_unlock' | 'bonus' | 'refund';
+  type: TransactionRow['type'];
   amount: number;
   balanceAfter: number;
-  itemId?: string;
-  itemTitle?: string;
-  status: 'completed' | 'pending' | 'failed';
-  createdAt: string;
-  paymentMethod?: string;
-}
-
-export interface Review {
-  id: string;
-  targetId: string;
-  userId: string;
-  userName: string;
-  rating: number;
-  comment: string;
-  createdAt: string;
-  verifiedPurchase: boolean;
-}
-
-export interface ContentReport {
-  id: string;
-  targetId: string;
-  targetTitle: string;
-  targetType: 'video' | 'pack';
-  userId: string;
-  reason: 'broken_link' | 'copyright' | 'inappropriate' | 'preview_mismatch' | 'other';
-  details: string;
-  status: 'pending' | 'reviewed' | 'resolved';
+  balanceBefore: number;
+  description: string;
+  status: string;
   createdAt: string;
 }
 
 export interface NotificationItem {
   id: string;
-  userId: string;
   title: string;
   message: string;
-  type: 'purchase' | 'deposit' | 'promo' | 'system';
+  type: string;
   read: boolean;
   createdAt: string;
-  link?: string;
+  link?: string | null;
 }
 
-export interface SEOSettings {
-  metaTitle: string;
-  metaDescription: string;
-  canonicalUrl: string;
-  robotsIndex: boolean;
-  ogImage: string;
-  keywords: string;
-}
+export type ActiveTab = 'home' | 'videos' | 'demo' | 'marketplace' | 'library' | 'wallet' | 'admin' | 'search' | 'auth';
 
-export type ActiveTab = 'home' | 'videos' | 'demo' | 'marketplace' | 'library' | 'wallet' | 'admin' | 'search';
+export type { AccessState, MediaRow, PaymentProvider, TopupRow, TransactionRow };

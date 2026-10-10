@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Video, User } from '../types';
 import { store } from '../services/store';
 import { 
@@ -13,7 +13,6 @@ import {
   Coins, 
   X, 
   Clock, 
-  Sparkles, 
   CheckCircle,
   AlertCircle,
   RotateCcw
@@ -36,7 +35,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   onOpenReport,
   onToast
 }) => {
-  const [video, setVideo] = useState<Video | undefined>(store.getVideos().find(v => v.id === videoId));
+  const [video, setVideo] = useState<Video | undefined>(store.getVideo(videoId));
   const [user, setUser] = useState<User>(store.getUser());
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -47,32 +46,50 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [unlockError, setUnlockError] = useState<string | null>(null);
 
+  // Playback resolution: the ONLY source of a stream URL is store.getStreamUrl (authorised
+  // /content/:id/access call). No sample-clip fallbacks exist any more.
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [accessMessage, setAccessMessage] = useState<string | null>(null);
+  const [resumeAt, setResumeAt] = useState(0);
+  const [isLoadingStream, setIsLoadingStream] = useState(true);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return store.subscribe(() => {
       setUser(store.getUser());
-      setVideo(store.getVideos().find(v => v.id === videoId));
+      setVideo(store.getVideo(videoId));
     });
   }, [videoId]);
 
+  const loadPlayback = useCallback(async () => {
+    setIsLoadingStream(true);
+    const result = await store.getStreamUrl(videoId);
+    setStreamUrl(result.url);
+    setAccessMessage(result.url ? null : result.message);
+    setResumeAt(result.url ? result.resumeAt : 0);
+    setIsLoadingStream(false);
+    return result;
+  }, [videoId]);
+
   useEffect(() => {
-    // Check if initial resume progress exists
-    const progress = user.watchHistory.find(w => w.videoId === videoId);
-    if (progress && videoRef.current) {
-      videoRef.current.currentTime = progress.progressSeconds;
-      setCurrentTime(progress.progressSeconds);
-    }
     setPreviewExceeded(false);
     setUnlockError(null);
-  }, [videoId]);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    void loadPlayback();
+  }, [loadPlayback]);
 
   if (!video) return null;
 
-  const isUnlocked = video.isFree || user.unlockedVideoIds.includes(video.id);
-  const previewLimit = video.previewTrimSeconds || 20;
-  const isFavorite = user.favorites.includes(video.id);
+  // The server-supplied free demo (products.demo_url) plays until its own clip ends —
+  // there is no client-side per-video trim any more.
+  const isPreview = !streamUrl && !!video.previewUrl;
+  const playableUrl = streamUrl ?? (video.previewUrl || null);
+  const isBlocked = !isLoadingStream && !playableUrl;
+  const isUnlocked = !!streamUrl || video.isFree || store.ownsVideo(video.id);
+  const isFavorite = store.isFavorite(video.id);
   const relatedVideos = store.getVideos().filter(v => v.id !== video.id && (v.category === video.category || v.isTrending)).slice(0, 4);
 
   // Time update handler
@@ -85,28 +102,19 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     if (Math.floor(time) % 5 === 0 && duration > 0) {
       store.saveWatchProgress(video.id, time, duration);
     }
-
-    // Check preview limit for paid locked videos
-    if (!isUnlocked && !video.isFree && time >= previewLimit) {
-      videoRef.current.pause();
-      setIsPlaying(false);
-      setPreviewExceeded(true);
-      onToast(`Preview limit (${previewLimit}s) reached. Unlock full video to continue.`);
-    }
   };
 
   const handleLoadedMetadata = () => {
-    if (videoRef.current) {
-      setDuration(videoRef.current.duration || video.durationSeconds);
+    if (!videoRef.current) return;
+    setDuration(videoRef.current.duration || video.durationSeconds);
+    if (resumeAt > 0 && resumeAt < (videoRef.current.duration || video.durationSeconds)) {
+      videoRef.current.currentTime = resumeAt;
+      setCurrentTime(resumeAt);
     }
   };
 
   const togglePlay = () => {
     if (!videoRef.current) return;
-    if (previewExceeded && !isUnlocked) {
-      onToast(`Please unlock the video to watch beyond the ${previewLimit}s preview.`);
-      return;
-    }
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -122,14 +130,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!videoRef.current) return;
     const targetTime = Number(e.target.value);
-    
-    // If not unlocked and seeking past preview limit
-    if (!isUnlocked && !video.isFree && targetTime > previewLimit) {
-      onToast(`Preview mode only allows viewing the first ${previewLimit} seconds.`);
-      videoRef.current.currentTime = previewLimit - 1;
-      return;
-    }
-
     videoRef.current.currentTime = targetTime;
     setCurrentTime(targetTime);
   };
@@ -158,24 +158,24 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     }
   };
 
-  const handleUnlock = () => {
+  const handleUnlock = async () => {
     setIsUnlocking(true);
     setUnlockError(null);
 
-    // Call store atomic unlock
-    const result = store.unlockVideo(video.id);
+    const result = await store.unlockVideo(video.id);
     setIsUnlocking(false);
 
     if (result.success) {
       setPreviewExceeded(false);
       onToast(result.message);
-      // Auto-resume playback
-      setTimeout(() => {
-        if (videoRef.current) {
-          videoRef.current.play();
-          setIsPlaying(true);
-        }
-      }, 300);
+      const playback = await loadPlayback();
+      if (playback.url) {
+        setTimeout(() => {
+          if (videoRef.current) {
+            videoRef.current.play().then(() => setIsPlaying(true)).catch(() => undefined);
+          }
+        }, 300);
+      }
     } else {
       setUnlockError(result.message);
       onToast(result.message);
@@ -192,8 +192,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     const s = Math.floor(sec % 60);
     return `${mins}:${s < 10 ? '0' : ''}${s}`;
   };
-
-  const remainingPreviewSeconds = Math.max(0, Math.ceil(previewLimit - currentTime));
 
   return (
     <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-y-auto">
@@ -224,58 +222,189 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             ref={playerContainerRef}
             className="relative aspect-video w-full bg-black rounded-xl md:rounded-2xl overflow-hidden border border-white/10 shadow-inner group"
           >
-            <video
-              ref={videoRef}
-              src={video.videoUrl}
-              poster={video.thumbnail}
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleLoadedMetadata}
-              onEnded={() => setIsPlaying(false)}
-              className="w-full h-full object-contain cursor-pointer"
-              onClick={togglePlay}
-              playsInline
-            />
-
-            {/* Preview Countdown Banner Overlay (only shown for locked preview videos) */}
-            {!isUnlocked && !video.isFree && !previewExceeded && (
-              <div className="absolute top-3 left-3 right-3 bg-black/75 backdrop-blur-md border border-purple-500/40 rounded-xl px-3 py-2 flex items-center justify-between text-xs z-20">
-                <div className="flex items-center gap-2 text-purple-200">
-                  <Clock className="w-4 h-4 text-purple-400 animate-pulse" />
-                  <span>
-                    Preview Mode: <strong className="text-white">{remainingPreviewSeconds}s remaining</strong> of {previewLimit}s preview
-                  </span>
-                </div>
-                <button
-                  onClick={handleUnlock}
-                  className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-3 py-1 rounded-lg text-[11px] transition-colors"
-                >
-                  Unlock ({video.creditPrice} CR)
-                </button>
+            {isLoadingStream ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-300 z-20">
+                <Clock className="w-7 h-7 animate-pulse text-purple-400" />
+                <span className="text-xs font-semibold">Checking your access…</span>
               </div>
-            )}
+            ) : playableUrl ? (
+              <>
+                <video
+                  ref={videoRef}
+                  src={playableUrl}
+                  poster={video.thumbnail}
+                  onTimeUpdate={handleTimeUpdate}
+                  onLoadedMetadata={handleLoadedMetadata}
+                  onEnded={() => {
+                    setIsPlaying(false);
+                    if (isPreview) setPreviewExceeded(true);
+                  }}
+                  className="w-full h-full object-contain cursor-pointer"
+                  onClick={togglePlay}
+                  playsInline
+                />
 
-            {/* Preview Ended Paywall Overlay */}
-            {previewExceeded && !isUnlocked && (
-              <div className="absolute inset-0 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-30 animate-fadeIn">
-                <div className="w-14 h-14 rounded-full bg-purple-600/30 border border-purple-500/50 flex items-center justify-center text-purple-300 mb-3">
+                {/* Free preview banner (only when playing the server-provided demo clip) */}
+                {isPreview && !previewExceeded && (
+                  <div className="absolute top-3 left-3 right-3 bg-black/75 backdrop-blur-md border border-purple-500/40 rounded-xl px-3 py-2 flex items-center justify-between text-xs z-20">
+                    <div className="flex items-center gap-2 text-purple-200">
+                      <Clock className="w-4 h-4 text-purple-400 animate-pulse" />
+                      <span>
+                        Preview Mode: <strong className="text-white">free demo clip</strong>
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleUnlock}
+                      disabled={isUnlocking}
+                      className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-3 py-1 rounded-lg text-[11px] transition-colors"
+                    >
+                      {isUnlocking ? 'Unlocking…' : `Unlock (${video.creditPrice} CR)`}
+                    </button>
+                  </div>
+                )}
+
+                {/* Preview Ended Paywall Overlay */}
+                {previewExceeded && isPreview && (
+                  <div className="absolute inset-0 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-30 animate-fadeIn">
+                    <div className="w-14 h-14 rounded-full bg-purple-600/30 border border-purple-500/50 flex items-center justify-center text-purple-300 mb-3">
+                      <Coins className="w-7 h-7" />
+                    </div>
+                    <h3 className="font-display font-bold text-xl md:text-2xl text-white mb-1">
+                      Preview Finished
+                    </h3>
+                    <p className="text-slate-300 text-xs md:text-sm max-w-md mb-4 leading-relaxed">
+                      You've watched the free preview clip. Unlock the full {video.duration} video to continue watching.
+                    </p>
+
+                    <div className="bg-[#171a2d] border border-white/10 rounded-xl p-3 mb-4 w-full max-w-sm flex items-center justify-between text-xs">
+                      <span className="text-slate-300">Unlock Price:</span>
+                      <span className="text-purple-300 font-bold text-sm tabular-nums">{video.creditPrice} Credits</span>
+                    </div>
+
+                    <div className="bg-[#171a2d] border border-white/10 rounded-xl p-3 mb-5 w-full max-w-sm flex items-center justify-between text-xs">
+                      <span className="text-slate-300">Your Current Balance:</span>
+                      <span className="text-white font-bold text-sm tabular-nums">{user.walletBalance} Credits</span>
+                    </div>
+
+                    {unlockError && (
+                      <div className="flex items-center gap-1.5 text-rose-400 text-xs mb-3">
+                        <AlertCircle className="w-4 h-4" />
+                        <span>{unlockError}</span>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      {user.walletBalance >= video.creditPrice ? (
+                        <button
+                          onClick={handleUnlock}
+                          disabled={isUnlocking}
+                          className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold px-6 py-2.5 rounded-xl text-sm flex items-center gap-2 shadow-lg shadow-purple-900/40 transition-all"
+                        >
+                          <Play className="w-4 h-4 fill-white" />
+                          {isUnlocking ? 'Unlocking...' : `Unlock & Watch (${video.creditPrice} Credits)`}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={onOpenWallet}
+                          className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-6 py-2.5 rounded-xl text-sm flex items-center gap-2 transition-all"
+                        >
+                          <Coins className="w-4 h-4" />
+                          Add Credits ({video.creditPrice - user.walletBalance} more needed)
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = 0;
+                            setPreviewExceeded(false);
+                          }
+                        }}
+                        className="bg-white/10 hover:bg-white/15 text-slate-300 px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Replay Preview
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom Bottom Player Control Bar */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 pt-6 flex flex-col gap-2 z-20">
+                  
+                  {/* Progress Seek Bar */}
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={0}
+                      max={duration || video.durationSeconds}
+                      value={currentTime}
+                      onChange={handleSeek}
+                      className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                    />
+                  </div>
+
+                  {/* Control Buttons */}
+                  <div className="flex items-center justify-between text-white text-xs">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={togglePlay}
+                        className="p-1 hover:text-purple-400 transition-colors"
+                        aria-label={isPlaying ? 'Pause' : 'Play'}
+                      >
+                        {isPlaying ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white" />}
+                      </button>
+
+                      <button
+                        onClick={toggleMute}
+                        className="p-1 hover:text-purple-400 transition-colors"
+                        aria-label={isMuted ? 'Unmute' : 'Mute'}
+                      >
+                        {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                      </button>
+
+                      <span className="text-[11px] font-mono text-slate-300 tabular-nums">
+                        {formatSeconds(currentTime)} / {formatSeconds(duration || video.durationSeconds)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {/* Playback speed toggle */}
+                      <div className="flex items-center gap-1 bg-black/50 px-2 py-0.5 rounded-md border border-white/10 text-[11px]">
+                        {[0.75, 1, 1.25, 1.5, 2].map(speed => (
+                          <button
+                            key={speed}
+                            onClick={() => handleSpeedChange(speed)}
+                            className={`px-1 py-0.5 rounded ${playbackSpeed === speed ? 'text-purple-300 font-bold' : 'text-slate-400 hover:text-white'}`}
+                          >
+                            {speed}x
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        onClick={toggleFullscreen}
+                        className="p-1 hover:text-purple-400 transition-colors"
+                        aria-label="Toggle Fullscreen"
+                      >
+                        <Maximize2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* No stream and no preview clip — show the server's honest reason, never a fake clip */
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-[#0c0e18]">
+                <div className="w-14 h-14 rounded-full bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 mb-3">
                   <Coins className="w-7 h-7" />
                 </div>
-                <h3 className="font-display font-bold text-xl md:text-2xl text-white mb-1">
-                  Preview Finished
+                <h3 className="font-display font-bold text-lg md:text-xl text-white mb-1">
+                  {video.title}
                 </h3>
                 <p className="text-slate-300 text-xs md:text-sm max-w-md mb-4 leading-relaxed">
-                  You've watched the free {previewLimit}-second preview clip. Unlock the full {video.duration} video to continue watching uninterrupted.
+                  {accessMessage ?? 'Unlock this item to watch.'}
                 </p>
-
-                <div className="bg-[#171a2d] border border-white/10 rounded-xl p-3 mb-4 w-full max-w-sm flex items-center justify-between text-xs">
-                  <span className="text-slate-300">Unlock Price:</span>
-                  <span className="text-purple-300 font-bold text-sm tabular-nums">{video.creditPrice} Credits</span>
-                </div>
-
-                <div className="bg-[#171a2d] border border-white/10 rounded-xl p-3 mb-5 w-full max-w-sm flex items-center justify-between text-xs">
-                  <span className="text-slate-300">Your Current Balance:</span>
-                  <span className="text-white font-bold text-sm tabular-nums">{user.walletBalance} Credits</span>
-                </div>
 
                 {unlockError && (
                   <div className="flex items-center gap-1.5 text-rose-400 text-xs mb-3">
@@ -284,112 +413,37 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   </div>
                 )}
 
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  {user.walletBalance >= video.creditPrice ? (
-                    <button
-                      onClick={handleUnlock}
-                      disabled={isUnlocking}
-                      className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold px-6 py-2.5 rounded-xl text-sm flex items-center gap-2 shadow-lg shadow-purple-900/40 transition-all"
-                    >
-                      <Play className="w-4 h-4 fill-white" />
-                      {isUnlocking ? 'Unlocking...' : `Unlock & Watch (${video.creditPrice} Credits)`}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={onOpenWallet}
-                      className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-6 py-2.5 rounded-xl text-sm flex items-center gap-2 transition-all"
-                    >
-                      <Coins className="w-4 h-4" />
-                      Add Credits ({video.creditPrice - user.walletBalance} more needed)
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => {
-                      if (videoRef.current) {
-                        videoRef.current.currentTime = 0;
-                        setPreviewExceeded(false);
-                      }
-                    }}
-                    className="bg-white/10 hover:bg-white/15 text-slate-300 px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Replay Preview
-                  </button>
-                </div>
+                {!video.isFree && (
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    {user.walletBalance >= video.creditPrice ? (
+                      <button
+                        onClick={handleUnlock}
+                        disabled={isUnlocking}
+                        className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold px-6 py-2.5 rounded-xl text-sm flex items-center gap-2 shadow-lg shadow-purple-900/40 transition-all"
+                      >
+                        <Coins className="w-4 h-4" />
+                        {isUnlocking ? 'Unlocking...' : `Unlock (${video.creditPrice} Credits)`}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={onOpenWallet}
+                        className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-6 py-2.5 rounded-xl text-sm flex items-center gap-2 transition-all"
+                      >
+                        <Coins className="w-4 h-4" />
+                        Top Up Credits
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
-
-            {/* Custom Bottom Player Control Bar */}
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 pt-6 flex flex-col gap-2 z-20">
-              
-              {/* Progress Seek Bar */}
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || video.durationSeconds}
-                  value={currentTime}
-                  onChange={handleSeek}
-                  className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                />
-              </div>
-
-              {/* Control Buttons */}
-              <div className="flex items-center justify-between text-white text-xs">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={togglePlay}
-                    className="p-1 hover:text-purple-400 transition-colors"
-                    aria-label={isPlaying ? 'Pause' : 'Play'}
-                  >
-                    {isPlaying ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white" />}
-                  </button>
-
-                  <button
-                    onClick={toggleMute}
-                    className="p-1 hover:text-purple-400 transition-colors"
-                    aria-label={isMuted ? 'Unmute' : 'Mute'}
-                  >
-                    {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                  </button>
-
-                  <span className="text-[11px] font-mono text-slate-300 tabular-nums">
-                    {formatSeconds(currentTime)} / {formatSeconds(duration || video.durationSeconds)}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  {/* Playback speed toggle */}
-                  <div className="flex items-center gap-1 bg-black/50 px-2 py-0.5 rounded-md border border-white/10 text-[11px]">
-                    {[0.75, 1, 1.25, 1.5, 2].map(speed => (
-                      <button
-                        key={speed}
-                        onClick={() => handleSpeedChange(speed)}
-                        className={`px-1 py-0.5 rounded ${playbackSpeed === speed ? 'text-purple-300 font-bold' : 'text-slate-400 hover:text-white'}`}
-                      >
-                        {speed}x
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={toggleFullscreen}
-                    className="p-1 hover:text-purple-400 transition-colors"
-                    aria-label="Toggle Fullscreen"
-                  >
-                    <Maximize2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
 
           </div>
 
           {/* Video Metadata & Actions Row */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
             
-            {/* Left 8 Cols: Title, Description, Tags, Creator */}
+            {/* Left 8 Cols: Title, Description, Tags */}
             <div className="md:col-span-8 space-y-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mb-1.5">
@@ -421,22 +475,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   </span>
                 ))}
               </div>
-
-              {/* Creator Card */}
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/10">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-purple-700 to-pink-600 flex items-center justify-center font-bold text-white text-sm">
-                  {video.creator.avatar}
-                </div>
-                <div>
-                  <div className="font-semibold text-sm text-white flex items-center gap-1.5">
-                    {video.creator.name}
-                    {video.creator.verified && (
-                      <span className="text-purple-400 text-xs">✓</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-slate-400">{video.creator.handle}</div>
-                </div>
-              </div>
             </div>
 
             {/* Right 4 Cols: Purchase / Unlock Status & Quick Actions */}
@@ -460,7 +498,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       <span>Unlocked & In Library</span>
                     </div>
                     <p className="text-xs text-slate-400">
-                      Permanent ownership granted. Watch anytime without paying again.
+                      {video.access?.is_lifetime
+                        ? 'Lifetime access. Watch anytime without paying again.'
+                        : video.access?.expires_at
+                          ? `Access until ${new Date(video.access.expires_at).toLocaleDateString()}.`
+                          : 'Purchased access granted.'}
                     </p>
                   </div>
                 ) : (
@@ -501,8 +543,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 {/* Quick actions buttons */}
                 <div className="pt-2 border-t border-white/10 flex items-center justify-between text-xs text-slate-300">
                   <button
-                    onClick={() => {
-                      const fav = store.toggleFavorite(video.id);
+                    onClick={async () => {
+                      const fav = await store.toggleFavorite(video.id);
                       onToast(fav ? 'Added to Watchlist' : 'Removed from Watchlist');
                     }}
                     className={`flex items-center gap-1.5 p-1.5 rounded-lg transition-colors ${isFavorite ? 'text-purple-400 font-bold' : 'hover:text-white'}`}
@@ -528,19 +570,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   </button>
                 </div>
               </div>
-
-              {/* Linked Digital Pack Teaser if this is a master demo */}
-              {video.linkedPackId && (
-                <div className="p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/30 text-xs space-y-2">
-                  <div className="font-bold text-purple-300 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Full Pack Available in Marketplace
-                  </div>
-                  <p className="text-slate-300 text-[11px] leading-relaxed">
-                    This video is the master demo for a complete digital archive.
-                  </p>
-                </div>
-              )}
 
             </div>
 

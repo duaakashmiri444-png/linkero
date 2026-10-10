@@ -14,7 +14,7 @@ export const Footer: React.FC<FooterProps> = ({ onSelectTab, onOpenWallet }) => 
             DESI<span className="text-purple-400">ERO</span> <span className="text-xs bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded border border-purple-500/30">PRO</span>
           </div>
           <p className="text-slate-400 text-xs leading-relaxed max-w-xs">
-            Premium streaming platform and digital content marketplace with master demos, credit unlock system, and multi-platform cloud packs.
+            Premium streaming platform and digital marketplace. Videos play in the inbuilt player, packs deliver the seller's own files, and every unlock is backed by a wallet transaction.
           </p>
         </div>
 
@@ -44,9 +44,9 @@ export const Footer: React.FC<FooterProps> = ({ onSelectTab, onOpenWallet }) => 
           <h4 className="font-bold text-white text-xs uppercase tracking-wider mb-3">Credits & Membership</h4>
           <ul className="space-y-2 text-xs">
             <li><button onClick={onOpenWallet} className="hover:text-white text-purple-300 font-semibold">Wallet Top-Up</button></li>
-            <li><span>VIP Monthly Benefits (10% Bonus)</span></li>
-            <li><span>Safe Atomic Transactions</span></li>
-            <li><span>Permanent Ownership Entitlements</span></li>
+            <li><span>Credits land in your wallet only after the owner verifies your payment reference</span></li>
+            <li><span>Every unlock is recorded in your wallet ledger</span></li>
+            <li><span>Access lasts as long as the listing states</span></li>
           </ul>
         </div>
       </div>
