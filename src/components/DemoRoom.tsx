@@ -85,7 +85,7 @@ export const DemoRoom: React.FC<DemoRoomProps> = ({ videos, user, onOpenVideo })
 
       {/* Pinned demo tabs — they tighten up once they are stuck to the top. */}
       <div
-        className={`sticky top-[57px] md:top-[63px] z-30 -mx-4 px-4 md:mx-0 md:px-0 bg-[#090a12]/95 backdrop-blur-xl border-y border-white/[0.06] transition-all ${
+        className={`sticky top-[73px] z-30 -mx-4 px-4 md:mx-0 md:px-0 bg-[#090a12]/95 backdrop-blur-xl border-y border-white/[0.06] transition-all ${
           pinned ? 'py-1.5' : 'py-2.5'
         }`}
       >

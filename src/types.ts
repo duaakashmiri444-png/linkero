@@ -66,6 +66,9 @@ export interface DigitalPack {
   category: CategoryType;
   /** Real file count from product_media; replaces the old free-text "9.0 GB" field. */
   fileCount: number;
+  /** The seller's own headline ("9 GB", "1100+ videos") for a pack this server cannot measure. */
+  sizeLabel: string;
+  contentsLabel: string;
   totalBytes: number;
   creditPrice: number;
   /** Deliverables, populated only after an authorised /api/content/:id/access call. */

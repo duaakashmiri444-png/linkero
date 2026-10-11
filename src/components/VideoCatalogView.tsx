@@ -67,7 +67,7 @@ export const VideoCatalogView: React.FC<VideoCatalogViewProps> = ({ videos, user
     <div className="py-6 space-y-5">
 
       {/* Pinned category bar: jump to a shelf, and it lights up as you scroll past them. */}
-      <div className="sticky top-[57px] md:top-[63px] z-30 bg-[#090a12]/95 backdrop-blur-xl border-y border-white/[0.06]">
+      <div className="sticky top-[73px] z-30 bg-[#090a12]/95 backdrop-blur-xl border-y border-white/[0.06]">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-2 flex flex-wrap items-center gap-2">
           <div className="flex w-full gap-1.5 overflow-x-auto overscroll-x-contain text-xs sm:w-auto sm:flex-wrap sm:items-center sm:overflow-visible">
             {shelves.map(group => (

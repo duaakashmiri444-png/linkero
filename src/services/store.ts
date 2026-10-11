@@ -1,12 +1,16 @@
 import { api } from './api';
 import type {
+  AdminCouponRow,
+  AdminOverview,
   AdminProductPayload,
+  AdminUserRow,
   ApiFailure,
   ContentAccess,
   MediaAsset,
   MediaRow,
   PaymentProvider,
   PlatformSettingRow,
+  ProductRow,
   SessionUser,
   SupportChannelsPublic,
   TopupRow,
@@ -625,6 +629,9 @@ class AppStore {
     photoFiles?: File[];
     demoVideoFile?: File | null;
     links?: { provider: string; url: string; label: string }[];
+    /** Headline text the owner writes himself: "9 GB", "1100+ videos". */
+    sizeLabel?: string;
+    contentsLabel?: string;
     attachToProductId?: number;
   }): Promise<ActionResult & { productId?: number }> {
     if (!form.title.trim()) return { success: false, message: 'A title is required.' };
@@ -705,6 +712,8 @@ class AppStore {
       access_duration_type: form.access_duration_type ?? '30_DAYS',
       premium_type: 'DIGITAL_RESOURCE',
       rights_confirmed: true,
+      size_label: (form.sizeLabel ?? '').trim(),
+      contents_label: (form.contentsLabel ?? '').trim(),
       demo_type: demo_url ? 'VIDEO' : undefined,
       demo_url,
       lessons: lessons.length ? lessons : undefined,
@@ -793,11 +802,12 @@ class AppStore {
     return { success: true, message: result.message || 'Removed from the catalogue.' };
   }
 
-  public async loadTopups(status?: string): Promise<void> {
+  public async loadTopups(status?: string): Promise<TopupRow[]> {
     const result = await this.run('loadTopups', () => api.admin.topups(status));
-    if (!result) return;
-    this.pendingTopups = result.topups;
+    // A filtered read must not shrink the cache the sidebar badge counts from.
+    if (result && !status) this.pendingTopups = result.topups;
     this.notify();
+    return result?.topups ?? [];
   }
 
   public async approveTopup(id: number): Promise<ActionResult> {
@@ -835,15 +845,120 @@ class AppStore {
     return { success: true, message: result.message || 'Settings saved.' };
   }
 
-  public async loadCategories(): Promise<{ id: number; name: string; slug: string; product_count?: number }[]> {
+  public async loadCategories(): Promise<
+    { id: number; name: string; slug: string; icon?: string; product_count?: number; is_active: number }[]
+  > {
     const result = await this.run('loadCategories', () => api.admin.categories());
     return result?.categories ?? [];
   }
 
-  public async createCategory(name: string): Promise<ActionResult> {
-    const result = await this.run('createCategory', () => api.admin.createCategory({ name }));
+  public async createCategory(name: string, icon?: string): Promise<ActionResult> {
+    const result = await this.run('createCategory', () => api.admin.createCategory({ name, icon }));
     if (!result) return this.fail();
     return { success: true, message: `Category “${result.category.name}” added.` };
+  }
+
+  public async updateCategory(
+    id: number,
+    body: { name?: string; slug?: string; icon?: string; description?: string; is_active?: number; sort_order?: number }
+  ): Promise<ActionResult> {
+    const result = await this.run('updateCategory', () => api.admin.updateCategory(id, body));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Category saved.' };
+  }
+
+  public async deleteCategory(id: number, force = false): Promise<ActionResult> {
+    const result = await this.run('deleteCategory', () => api.admin.deleteCategory(id, force));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Category deleted.' };
+  }
+
+  /** Re-adds the built-in tag set, e.g. after an admin cleaned out a test catalogue. */
+  public async restoreDefaultCategories(): Promise<ActionResult> {
+    const result = await this.run('restoreDefaultCategories', () => api.admin.restoreDefaultCategories());
+    if (!result) return this.fail();
+    await this.loadCategories();
+    return { success: true, message: result.message || 'Default categories restored.' };
+  }
+
+  /** The stored row behind a listing, so the edit form starts from the database, not the card. */
+  public async loadListingDetail(productId: number): Promise<ProductRow | null> {
+    const result = await this.run('loadListingDetail', () => api.admin.product(productId));
+    return result?.product ?? null;
+  }
+
+  /** Edits a published listing's own words and price without touching its media. */
+  public async updateListing(productId: number, payload: Partial<AdminProductPayload>): Promise<ActionResult> {
+    const result = await this.run('updateListing', () => api.admin.updateProduct(productId, payload));
+    if (!result) return this.fail();
+    await this.refreshCatalogue();
+    return { success: true, message: result.message || 'Listing saved.' };
+  }
+
+  public async loadOverview(days?: number): Promise<AdminOverview | null> {
+    return this.run('loadOverview', () => api.admin.overview(days));
+  }
+
+  public async loadUsers(params: { q?: string; role?: string; status?: string } = {}): Promise<AdminUserRow[]> {
+    const result = await this.run('loadUsers', () => api.admin.users(params));
+    return result?.users ?? [];
+  }
+
+  public async loadUserDetail(id: number) {
+    return this.run('loadUserDetail', () => api.admin.userDetail(id));
+  }
+
+  public async setUserRole(id: number, role: string): Promise<ActionResult> {
+    const result = await this.run('setUserRole', () => api.admin.setUserRole(id, role));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Role updated.' };
+  }
+
+  public async setUserStatus(id: number, status: string, reason?: string): Promise<ActionResult> {
+    const result = await this.run('setUserStatus', () => api.admin.setUserStatus(id, status, reason));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Account updated.' };
+  }
+
+  public async adjustBalance(id: number, amount: number, reason: string): Promise<ActionResult> {
+    const result = await this.run('adjustBalance', () => api.admin.adjustBalance(id, { amount, reason }));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Balance adjusted.' };
+  }
+
+  public async deleteUser(id: number): Promise<ActionResult> {
+    const result = await this.run('deleteUser', () => api.admin.deleteUser(id));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Account removed.' };
+  }
+
+  public async loadPurchases(params: { q?: string; status?: string; limit?: number } = {}) {
+    return this.run('loadPurchases', () => api.admin.purchases(params));
+  }
+
+  public async loadWalletTransactions(params: { q?: string; type?: string; status?: string; limit?: number } = {}) {
+    return this.run('loadWalletTransactions', () => api.admin.walletTransactions(params));
+  }
+
+  public async loadCoupons(): Promise<AdminCouponRow[]> {
+    const result = await this.run('loadCoupons', () => api.admin.coupons());
+    return result?.coupons ?? [];
+  }
+
+  public async saveCoupon(body: Partial<AdminCouponRow>, id?: number): Promise<ActionResult> {
+    const result = await this.run('saveCoupon', () => (id ? api.admin.updateCoupon(id, body) : api.admin.createCoupon(body)));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Coupon saved.' };
+  }
+
+  public async deleteCoupon(id: number): Promise<ActionResult> {
+    const result = await this.run('deleteCoupon', () => api.admin.deleteCoupon(id));
+    if (!result) return this.fail();
+    return { success: true, message: result.message || 'Coupon deleted.' };
+  }
+
+  public async loadAuditLogs(params: { q?: string; action?: string; limit?: number } = {}) {
+    return this.run('loadAuditLogs', () => api.admin.auditLogs(params));
   }
 }
 

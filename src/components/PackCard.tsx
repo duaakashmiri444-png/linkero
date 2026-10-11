@@ -10,6 +10,13 @@ interface PackCardProps {
 }
 
 export const PackCard: React.FC<PackCardProps> = ({ pack, onOpen, isUnlocked }) => {
+  // The seller's own headline wins: a Telegram archive holds far more than this server can count.
+  const headline = [pack.sizeLabel, pack.contentsLabel].filter(Boolean).join(' · ');
+  const counted = pack.videoCount > 0
+    ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}${pack.fileCount > 0 ? ` + ${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}` : ''}`
+    : pack.totalBytes > 0
+      ? humanBytes(pack.totalBytes)
+      : `${pack.fileCount} files`;
   const getPlatformIcon = (platform: string) => {
     switch (platform) {
       case 'MEGA':
@@ -62,13 +69,9 @@ export const PackCard: React.FC<PackCardProps> = ({ pack, onOpen, isUnlocked }) 
             )}
           </div>
 
-          {/* Size / File-count Badge (real values only) */}
+          {/* Size / file-count badge — the owner's headline when he wrote one, real counts otherwise */}
           <div className="absolute bottom-2.5 right-2.5 z-10 bg-black/80 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded-md tabular-nums">
-            {pack.videoCount > 0
-              ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}${pack.fileCount > 0 ? ` + ${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}` : ''}`
-              : pack.totalBytes > 0
-                ? humanBytes(pack.totalBytes)
-                : `${pack.fileCount} files`}
+            {headline || counted}
           </div>
 
           {pack.videoCount > 0 && (
@@ -88,9 +91,10 @@ export const PackCard: React.FC<PackCardProps> = ({ pack, onOpen, isUnlocked }) 
             <span className="text-purple-300/80 font-semibold">{pack.category}</span>
             <span aria-hidden="true">·</span>
             <span>
-              {pack.videoCount > 0
-                ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}`
-                : `${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}`}
+              {pack.contentsLabel ||
+                (pack.videoCount > 0
+                  ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}`
+                  : `${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}`)}
             </span>
           </div>
         </div>

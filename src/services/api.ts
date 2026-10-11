@@ -83,6 +83,10 @@ export interface ProductRow {
   premium_type: string | null;
   premium_resource_url?: string | null;
   premium_resource_meta?: string | null;
+  /** The seller's own headline for how big a pack is, e.g. "9 GB". Shown exactly as typed. */
+  size_label?: string | null;
+  /** ...and how much it holds, e.g. "1100+ videos". */
+  contents_label?: string | null;
   tags: string | null;
   status: string;
   views: number;
@@ -323,6 +327,8 @@ export interface AdminProductPayload {
   demo_description?: string;
   premium_type?: string;
   premium_resource_url?: string;
+  size_label?: string;
+  contents_label?: string;
   tags?: string;
   status?: string;
   rights_confirmed: true;
@@ -330,6 +336,104 @@ export interface AdminProductPayload {
   files?: Record<string, unknown>[];
   /** Public preview photos, written as DEMO access media so shoppers see them before paying. */
   demo_media?: Record<string, unknown>[];
+}
+
+/** One day of the dashboard chart. The server zero-fills quiet days so the line has no gaps. */
+export interface SeriesPoint {
+  day: string;
+  revenue?: number;
+  sales?: number;
+  signups?: number;
+  resumes?: number;
+}
+
+export interface AdminOverview {
+  success: boolean;
+  days: number;
+  /** A delta of null means there was nothing to compare against, so the UI must not claim growth. */
+  kpis: Record<string, number | null>;
+  series: { revenue: SeriesPoint[]; signups: SeriesPoint[]; watching: SeriesPoint[] };
+  top_products: Array<{ id: number; title: string; slug: string; price: number; status: string; sales: number; revenue: number }>;
+  most_viewed: Array<{ id: number; title: string; slug: string; price: number; status: string; views: number; purchases_count: number }>;
+  content_mix: Array<{ name: string; count: number }>;
+  categories: Array<{ id: number; name: string; count: number }>;
+}
+
+export interface AdminUserRow {
+  id: number;
+  email: string;
+  username: string;
+  role: UserRole;
+  avatar_url: string | null;
+  status: string;
+  created_at: string;
+  wallet_balance: number;
+  purchases_count: number;
+  spent_credits: number;
+  topped_up_credits: number;
+  favorites_count: number;
+  reviews_count: number;
+  watched_count: number;
+  last_activity: string | null;
+}
+
+export interface AdminPurchaseRow {
+  id: number;
+  price_paid: number;
+  status: string;
+  starts_at: string;
+  expires_at: string | null;
+  created_at: string;
+  user_id: number;
+  username: string;
+  email: string;
+  product_id: number;
+  product_title: string;
+  product_slug: string;
+  still_valid: number;
+}
+
+export interface AdminWalletRow {
+  id: number;
+  type: string;
+  amount: number;
+  balance_before: number;
+  balance_after: number;
+  reference: string | null;
+  status: string;
+  description: string | null;
+  created_at: string;
+  user_id: number;
+  username: string;
+  email: string;
+}
+
+export interface AdminCouponRow {
+  id: number;
+  code: string;
+  discount_type: 'PERCENTAGE' | 'FIXED_CREDITS' | string;
+  discount_value: number;
+  start_date: string | null;
+  end_date: string | null;
+  usage_limit: number;
+  times_used: number;
+  min_purchase: number;
+  is_active: number;
+  redemptions?: number;
+  buyers?: number;
+}
+
+export interface AdminAuditRow {
+  id: number;
+  actor_id: number | null;
+  actor_name: string;
+  actor_email?: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  details: string | null;
+  ip_address: string | null;
+  created_at: string;
 }
 
 function errorFrom(status: number, payload: any): ApiFailure {
@@ -501,6 +605,40 @@ export const api = {
 
   admin: {
     stats: () => request<{ success: boolean; stats: Record<string, number | string> }>('/api/admin/stats'),
+    /** Every number on the owner dashboard, aggregated from real rows by the server. */
+    overview: (days?: number) => request<AdminOverview>(`/api/admin/analytics/overview${q({ days })}`),
+    users: (params: { q?: string; role?: string; status?: string } = {}) =>
+      request<{ success: boolean; users: AdminUserRow[]; total: number }>(`/api/admin/users${q(params)}`),
+    userDetail: (id: number) =>
+      request<{
+        success: boolean;
+        user: AdminUserRow & { currency: string };
+        purchases: Array<{ id: number; title: string; price_paid: number; status: string; starts_at: string; expires_at: string | null; created_at: string }>;
+        transactions: Array<{ id: number; type: string; amount: number; balance_after: number; status: string; description: string | null; created_at: string }>;
+        topups: TopupRow[];
+        favorites: Array<{ id: number; title: string; created_at: string }>;
+      }>(`/api/admin/users/${id}`),
+    setUserRole: (id: number, role: string) =>
+      request<{ success: boolean; message: string }>(`/api/admin/users/${id}/role`, { method: 'PUT', body: { role } }),
+    setUserStatus: (id: number, status: string, reason?: string) =>
+      request<{ success: boolean; message: string }>(`/api/admin/users/${id}/status`, { method: 'PUT', body: { status, reason } }),
+    adjustBalance: (id: number, body: { amount: number; reason: string }) =>
+      request<{ success: boolean; message: string; new_balance: number }>(`/api/admin/users/${id}/adjust-balance`, { method: 'POST', body }),
+    deleteUser: (id: number) => request<{ success: boolean; message: string }>(`/api/admin/users/${id}`, { method: 'DELETE' }),
+    purchases: (params: { q?: string; status?: string; limit?: number } = {}) =>
+      request<{ success: boolean; purchases: AdminPurchaseRow[]; total: number; credits: number }>(`/api/admin/purchases${q(params)}`),
+    walletTransactions: (params: { q?: string; type?: string; status?: string; limit?: number } = {}) =>
+      request<{ success: boolean; transactions: AdminWalletRow[]; total: number; credits: number }>(
+        `/api/admin/wallet-transactions${q(params)}`
+      ),
+    coupons: () => request<{ success: boolean; coupons: AdminCouponRow[] }>('/api/admin/coupons'),
+    createCoupon: (body: Partial<AdminCouponRow>) =>
+      request<{ success: boolean; message: string; id: number }>('/api/admin/coupons', { method: 'POST', body }),
+    updateCoupon: (id: number, body: Partial<AdminCouponRow>) =>
+      request<{ success: boolean; message: string }>(`/api/admin/coupons/${id}`, { method: 'PUT', body }),
+    deleteCoupon: (id: number) => request<{ success: boolean; message: string }>(`/api/admin/coupons/${id}`, { method: 'DELETE' }),
+    auditLogs: (params: { q?: string; action?: string; limit?: number } = {}) =>
+      request<{ success: boolean; logs: AdminAuditRow[]; actions: string[] }>(`/api/admin/audit-logs${q(params)}`),
     products: () => request<{ success: boolean; products: ProductRow[] }>('/api/admin/products'),
     product: (id: number) =>
       request<{ success: boolean; product: ProductRow; lessons: LessonRow[]; media: MediaRow[]; categories: unknown[]; assets: MediaAsset[] }>(
@@ -571,6 +709,15 @@ export const api = {
       ),
     createCategory: (body: { name: string; slug?: string; icon?: string; description?: string }) =>
       request<{ success: boolean; category: { id: number; name: string; slug: string } }>('/api/categories', { method: 'POST', body }),
+    updateCategory: (id: number, body: { name?: string; slug?: string; icon?: string; description?: string; is_active?: number; sort_order?: number }) =>
+      request<{ success: boolean; message: string; category: { id: number; name: string; slug: string } }>(`/api/categories/${id}`, {
+        method: 'PUT',
+        body,
+      }),
+    deleteCategory: (id: number, force = false) =>
+      request<{ success: boolean; message: string }>(`/api/categories/${id}${force ? '?force=1' : ''}`, { method: 'DELETE' }),
+    restoreDefaultCategories: () =>
+      request<{ success: boolean; message: string; added: number }>('/api/categories/restore-defaults', { method: 'POST' }),
     settings: () => request<{ success: boolean; settings: PlatformSettingRow[] }>('/api/admin/config/settings'),
     saveSettings: (settings: Record<string, string>) =>
       request<{ success: boolean; message: string; settings: PlatformSettingRow[] }>('/api/admin/config/settings', {

@@ -212,11 +212,12 @@ export const PackDetailsModal: React.FC<PackDetailsModalProps> = ({
                       <span>{pack.platform}</span>
                     </div>
                     <div className="absolute bottom-3 right-3 bg-black/80 px-2.5 py-1 rounded-lg text-xs font-bold text-purple-300 border border-purple-500/30">
-                      {pack.videoCount > 0
-                        ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}${pack.fileCount > 0 ? ` + ${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}` : ''}`
-                        : pack.totalBytes > 0
-                          ? humanBytes(pack.totalBytes)
-                          : `${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}`}
+                      {[pack.sizeLabel, pack.contentsLabel].filter(Boolean).join(' · ') ||
+                        (pack.videoCount > 0
+                          ? `${pack.videoCount} video${pack.videoCount === 1 ? '' : 's'}${pack.fileCount > 0 ? ` + ${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}` : ''}`
+                          : pack.totalBytes > 0
+                            ? humanBytes(pack.totalBytes)
+                            : `${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}`)}
                     </div>
                   </>
                 )}
@@ -295,7 +296,13 @@ export const PackDetailsModal: React.FC<PackDetailsModalProps> = ({
                 <div className="flex items-center gap-2 text-xs text-slate-400 mb-1 flex-wrap">
                   <span className="text-purple-300 font-semibold">{pack.category}</span>
                   <span>·</span>
-                  <span>{pack.fileCount} file{pack.fileCount === 1 ? '' : 's'}</span>
+                  <span>{pack.contentsLabel || `${pack.fileCount} file${pack.fileCount === 1 ? '' : 's'}`}</span>
+                  {pack.sizeLabel && (
+                    <>
+                      <span>·</span>
+                      <span>{pack.sizeLabel}</span>
+                    </>
+                  )}
                   {pack.videoCount > 0 && (
                     <>
                       <span>·</span>
@@ -304,7 +311,7 @@ export const PackDetailsModal: React.FC<PackDetailsModalProps> = ({
                       </span>
                     </>
                   )}
-                  {pack.totalBytes > 0 && (
+                  {pack.totalBytes > 0 && !pack.sizeLabel && (
                     <>
                       <span>·</span>
                       <span>{humanBytes(pack.totalBytes)}</span>

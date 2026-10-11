@@ -96,6 +96,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <>
+    {/* Every bar that pins under this header uses top-[73px], which is its height at all widths. */}
     <header className="sticky top-0 z-40 bg-[#090a12]/90 backdrop-blur-xl border-b border-white/[0.08] px-3 md:px-8 py-3.5">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 sm:gap-6">
         

@@ -41,7 +41,7 @@ export function CatalogueSection<T extends { id: string }>(props: CatalogueSecti
         id={anchor}
         className={`flex items-center gap-2.5 py-2.5 border-b border-white/[0.06] -mx-4 px-4 md:-mx-0 md:px-0 scroll-mt-28 ${
           pinned
-            ? 'sticky top-[59px] md:top-[65px] z-20 bg-[#090a12]/95 backdrop-blur-xl'
+            ? 'sticky top-[73px] z-20 bg-[#090a12]/95 backdrop-blur-xl'
             : 'bg-transparent'
         }`}
       >

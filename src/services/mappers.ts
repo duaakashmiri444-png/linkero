@@ -204,6 +204,8 @@ export function toPack(p: ProductRow): DigitalPack {
     platforms: platformLabels(p),
     category: p.category ?? 'Uncategorised',
     fileCount: Number(p.file_count ?? 0),
+    sizeLabel: (p.size_label ?? '').trim(),
+    contentsLabel: (p.contents_label ?? '').trim(),
     totalBytes: 0,
     creditPrice: Number(p.price ?? 0),
     files: [],
