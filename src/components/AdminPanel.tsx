@@ -1,8 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { store } from '../services/store';
 import { DELIVERY_PLATFORMS, formatDuration, humanBytes } from '../services/mappers';
-import type { MediaAsset, PlatformSettingRow, TopupRow } from '../services/api';
+import type { AdminAuditRow, AdminOverview, MediaAsset, PlatformSettingRow } from '../services/api';
 import type { DigitalPack, Video } from '../types';
+import { AuditPanel } from './admin/AuditPanel';
+import { CategoriesPanel } from './admin/CategoriesPanel';
+import { CouponsPanel } from './admin/CouponsPanel';
+import { DashboardPanel } from './admin/DashboardPanel';
+import { ListingEditModal } from './admin/ListingEditModal';
+import { PaymentsPanel } from './admin/PaymentsPanel';
+import { UsersPanel } from './admin/UsersPanel';
 import {
   BarChart3,
   Film,
@@ -18,6 +25,11 @@ import {
   AlertCircle,
   Clock,
   ExternalLink,
+  Pencil,
+  ScrollText,
+  Tags,
+  Ticket,
+  UserRound,
   Image as PhotoIcon
 } from 'lucide-react';
 
@@ -25,7 +37,17 @@ interface AdminPanelProps {
   onToast: (msg: string) => void;
 }
 
-type PanelTab = 'dashboard' | 'videos' | 'packs' | 'topups' | 'files' | 'settings';
+type PanelTab =
+  | 'dashboard'
+  | 'videos'
+  | 'packs'
+  | 'users'
+  | 'payments'
+  | 'coupons'
+  | 'categories'
+  | 'files'
+  | 'settings'
+  | 'audit';
 
 const DURATIONS = [
   { value: 'LIFETIME', label: 'Lifetime access' },
@@ -79,21 +101,27 @@ const EMPTY_PACK_FORM = {
   category: '',
   price: 60,
   status: 'PUBLISHED',
-  access_duration_type: '30_DAYS'
+  access_duration_type: '30_DAYS',
+  sizeLabel: '',
+  contentsLabel: ''
 };
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
   const [activeTab, setActiveTab] = useState<PanelTab>('dashboard');
   const [videos, setVideos] = useState<Video[]>(() => store.getVideos());
   const [packs, setPacks] = useState<DigitalPack[]>(() => store.getPacks());
-  const [topups, setTopups] = useState<TopupRow[]>([]);
   const [uploads, setUploads] = useState<MediaAsset[]>(() => store.getUploads());
   const [stats, setStats] = useState<Record<string, number | string>>(() => store.getAdminStats());
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [overviewDays, setOverviewDays] = useState(30);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [recentLogs, setRecentLogs] = useState<AdminAuditRow[]>([]);
+  const [editing, setEditing] = useState<{ productId: number; kind: 'video' | 'pack' } | null>(null);
+
   const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
-  const [newCategory, setNewCategory] = useState('');
 
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [videoForm, setVideoForm] = useState(EMPTY_VIDEO_FORM);
@@ -117,7 +145,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
   const [previewStart, setPreviewStart] = useState('');
   const [previewClipFile, setPreviewClipFile] = useState<File | null>(null);
 
-  const [topupFilter, setTopupFilter] = useState<'PENDING' | 'APPROVED' | 'REJECTED' | ''>('PENDING');
   const [settingsRows, setSettingsRows] = useState<PlatformSettingRow[]>([]);
   const [settingsDraft, setSettingsDraft] = useState<Record<string, string>>({});
 
@@ -131,6 +158,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
   const libraryUploadRef = useRef<HTMLInputElement>(null);
   const previewClipInputRef = useRef<HTMLInputElement>(null);
 
+  const isSuper = store.isSuperAdmin();
+
   useEffect(() => {
     void store.loadAdmin();
     void store.loadCategories().then(rows => setCategories(rows.map(r => ({ id: r.id, name: r.name }))));
@@ -140,14 +169,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
       setUploads(store.getUploads());
       setStats(store.getAdminStats());
       setStatus(store.getStatusMessage());
-      setTopups(store.getPendingTopups());
     });
   }, []);
 
   useEffect(() => {
-    if (activeTab !== 'topups') return;
-    void store.loadTopups(topupFilter || undefined);
-  }, [activeTab, topupFilter]);
+    if (activeTab !== 'dashboard') return;
+    setOverviewLoading(true);
+    void Promise.all([store.loadOverview(overviewDays), isSuper ? store.loadAuditLogs({ limit: 8 }) : Promise.resolve(null)])
+      .then(([result, logs]) => {
+        if (result) setOverview(result);
+        setRecentLogs(logs?.logs ?? []);
+      })
+      .finally(() => setOverviewLoading(false));
+    // Staff cannot read the activity log, so their dashboard skips that feed instead of
+    // firing a request the backend will refuse.
+  }, [activeTab, overviewDays, isSuper]);
 
   useEffect(() => {
     if (activeTab !== 'settings' || settingsRows.length) return;
@@ -157,8 +193,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
     });
   }, [activeTab, settingsRows.length]);
 
-  const isSuper = store.isSuperAdmin();
-  const pendingTopups = topups.filter(t => t.status === 'PENDING');
+  const pendingTopupCount = Number(stats.pending_topups || 0);
   const storageBytes = uploads.reduce((sum, a) => sum + Number(a.size_bytes || 0), 0);
   const packBytesTotal = packFiles.reduce((sum, f) => sum + f.size, 0);
   const filledPackLinks = packLinks.filter(l => l.url.trim()).length;
@@ -289,16 +324,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
     if (result.success) setPreviewTarget(null);
   };
 
-  const reviewTopup = async (topup: TopupRow, approve: boolean) => {
-    const reason = approve
-      ? undefined
-      : window.prompt(`Reject top-up #${topup.id} (${topup.amount_credits} credits)? Give the buyer a reason:`, 'Payment not found in our account');
-    if (!approve && reason === null) return;
-    setBusy(true);
-    const result = approve ? await store.approveTopup(topup.id) : await store.rejectTopup(topup.id, reason ?? undefined);
-    setBusy(false);
-    onToast(result.message);
-  };
+  const openEdit = (productId: number, kind: 'video' | 'pack') => setEditing({ productId, kind });
 
   const saveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -308,55 +334,77 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
     onToast(result.message);
   };
 
-  const addCategory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCategory.trim()) return;
-    const result = await store.createCategory(newCategory.trim());
-    onToast(result.message);
-    if (result.success) {
-      setNewCategory('');
-      setCategories((await store.loadCategories()).map(r => ({ id: r.id, name: r.name })));
-    }
-  };
-
-  const tabs: { id: PanelTab; label: string; icon: typeof Film; badge?: number }[] = [
+  const tabs: { id: PanelTab; label: string; icon: typeof Film; badge?: number; ownerOnly?: boolean }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-    { id: 'videos', label: `Videos (${videos.length})`, icon: Film },
-    { id: 'packs', label: `Packs (${packs.length})`, icon: Package },
-    { id: 'topups', label: `Top-ups (${pendingTopups.length})`, icon: Coins },
-    { id: 'files', label: `Files (${uploads.length})`, icon: FolderOpen },
-    { id: 'settings', label: 'Platform Settings', icon: Settings2 }
+    { id: 'videos', label: 'Videos', icon: Film, badge: videos.length },
+    { id: 'packs', label: 'Packs', icon: Package, badge: packs.length },
+    { id: 'users', label: 'Users', icon: UserRound, badge: Number(stats.total_users || 0) },
+    { id: 'payments', label: 'Payments', icon: Coins, badge: pendingTopupCount },
+    { id: 'coupons', label: 'Coupons', icon: Ticket },
+    { id: 'categories', label: 'Categories', icon: Tags, badge: categories.length },
+    { id: 'files', label: 'Media library', icon: FolderOpen, badge: uploads.length },
+    { id: 'settings', label: 'Settings', icon: Settings2 },
+    { id: 'audit', label: 'Activity log', icon: ScrollText, ownerOnly: true }
   ];
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-6">
-        <div>
-          <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded uppercase tracking-wider">
-            {store.getUser().role === 'SUPER_ADMIN' ? 'OWNER PORTAL' : 'STAFF PORTAL'}
-          </span>
-          <h1 className="font-display font-black text-3xl sm:text-4xl text-white tracking-tight mt-1">Control Panel</h1>
-          <p className="text-slate-400 text-xs sm:text-sm mt-1">
-            Everything here writes to the live database — uploads are stored on the server and served from /uploads.
-          </p>
-        </div>
+  const nav = tabs.filter(tab => !tab.ownerOnly || isSuper);
+  const activeLabel = tabs.find(tab => tab.id === activeTab)?.label ?? 'Dashboard';
 
-        <div className="flex flex-wrap gap-1 bg-[#121422] p-1 rounded-2xl border border-white/10 text-xs">
-          {tabs.map(tab => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-1.5 rounded-xl font-semibold transition-all flex items-center gap-1.5 ${activeTab === tab.id ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+  return (
+    <div className="max-w-[1500px] mx-auto px-3 sm:px-6 py-6 space-y-6">
+      <div className="flex flex-col lg:flex-row gap-5 lg:gap-6">
+        <aside className="lg:w-56 xl:w-64 lg:shrink-0">
+          <div className="rounded-2xl border border-white/10 bg-[#121422] p-3 lg:sticky lg:top-24">
+            <div className="px-2 pb-3">
+              <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded uppercase tracking-wider">
+                {isSuper ? 'OWNER PORTAL' : 'STAFF PORTAL'}
+              </span>
+              <h1 className="font-display font-black text-2xl text-white tracking-tight mt-2">Control Panel</h1>
+              <p className="text-slate-500 text-[11px] mt-1">Every action here writes to the live database.</p>
+            </div>
+
+            <nav className="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0">
+              {nav.map(tab => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`shrink-0 lg:w-full px-3 py-2 rounded-xl font-semibold text-xs transition-colors flex items-center gap-2 text-left ${
+                      active ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="flex-1 truncate">{tab.label}</span>
+                    {tab.badge ? (
+                      <span
+                        className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full ${
+                          active ? 'bg-white/20 text-white' : 'bg-white/5 text-slate-400'
+                        }`}
+                      >
+                        {tab.badge}
+                      </span>
+                    ) : null}
+                    {!active && tab.id === 'payments' && pendingTopupCount > 0 && (
+                      <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        </aside>
+
+        <main className="flex-1 min-w-0 space-y-6">
+          <div className="flex items-baseline justify-between gap-3 border-b border-white/10 pb-3">
+            <h2 className="font-bold text-white text-xl sm:text-2xl">{activeLabel}</h2>
+            {(activeTab === 'videos' || activeTab === 'packs') && (
+              <p className="text-[11px] text-slate-500 hidden sm:block">
+                Files upload to the server first; nothing publishes until the listing points at the hosted URL.
+              </p>
+            )}
+          </div>
 
       {status && (
         <div className="text-xs text-purple-200 bg-purple-600/15 border border-purple-500/25 rounded-xl px-4 py-2.5 flex items-center gap-2">
@@ -367,61 +415,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
 
       {/* DASHBOARD */}
       {activeTab === 'dashboard' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { label: 'Registered buyers', value: stats.total_users, hint: `${stats.active_users ?? 0} active` },
-              { label: 'Paid unlocks', value: stats.total_purchases, hint: `${stats.total_revenue_credits ?? 0} CR spent` },
-              { label: 'Published products', value: stats.published_products, hint: `${stats.total_products ?? 0} total rows` },
-              { label: 'Top-ups awaiting review', value: stats.pending_topups, hint: `${stats.expired_access_count ?? 0} expired access rows` }
-            ].map(card => (
-              <div key={card.label} className="p-5 rounded-2xl bg-[#141626] border border-white/10">
-                <span className="text-xs font-semibold text-slate-400">{card.label}</span>
-                <div className="text-2xl font-black text-white mt-1 tabular-nums">{card.value ?? 0}</div>
-                <span className="text-[11px] text-purple-400">{card.hint}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="p-6 rounded-2xl bg-[#141626] border border-white/10 space-y-4">
-            <h3 className="font-bold text-white text-base">Publish new content</h3>
-            <p className="text-xs text-slate-400 max-w-2xl">
-              Both forms upload the actual file to the server. Videos stream from the inbuilt player at their
-              <span className="font-mono text-purple-300"> /uploads/videos/… </span>
-              URL; packs deliver the uploaded archives to paying buyers only.
-            </p>
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => setShowVideoModal(true)}
-                className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                Publish video listing
-              </button>
-              <button
-                onClick={() => setShowPackModal(true)}
-                className="bg-pink-600 hover:bg-pink-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                Publish archive pack
-              </button>
-            </div>
-          </div>
-
-          {pendingTopups.length > 0 && (
-            <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-5">
+          {pendingTopupCount > 0 && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs text-amber-200">
-                <span className="font-bold">{pendingTopups.length} payment reference(s)</span> are waiting for verification.
+                <span className="font-bold">{pendingTopupCount} payment reference(s)</span> are waiting for verification.
                 Credits stay out of buyer wallets until you approve them.
               </div>
               <button
-                onClick={() => setActiveTab('topups')}
+                onClick={() => setActiveTab('payments')}
                 className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1.5 rounded-lg text-xs"
               >
                 Open review queue
               </button>
             </div>
           )}
+
+          <DashboardPanel
+            overview={overview}
+            logs={recentLogs}
+            loading={overviewLoading}
+            onDays={setOverviewDays}
+            onGo={tab => {
+              setActiveTab(tab as PanelTab);
+              if (tab === 'videos') setShowVideoModal(true);
+              if (tab === 'packs') setShowPackModal(true);
+            }}
+          />
         </div>
       )}
 
@@ -469,6 +489,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                       </td>
                       <td className="p-3 text-[10px] font-bold uppercase text-slate-400">{v.status}</td>
                       <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                        <button
+                          onClick={() => openEdit(v.productId, 'video')}
+                          className="text-slate-400 hover:text-white p-1 font-semibold inline-flex items-center gap-1"
+                          title="Edit title, description, price or visibility"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Edit
+                        </button>
                         <button
                           onClick={() => void runCover(v.productId)}
                           className="text-slate-400 hover:text-white p-1 font-semibold"
@@ -555,6 +583,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                       <td className="p-3 text-[10px] font-bold uppercase text-slate-400">{p.status}</td>
                       <td className="p-3 text-right space-x-2 whitespace-nowrap">
                         <button
+                          onClick={() => openEdit(p.productId, 'pack')}
+                          className="text-slate-400 hover:text-white p-1 font-semibold inline-flex items-center gap-1"
+                          title="Edit title, description, price or visibility"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Edit
+                        </button>
+                        <button
                           onClick={() => void runCover(p.productId)}
                           className="text-slate-400 hover:text-white p-1 font-semibold"
                           title="Take the cover from this pack's video"
@@ -598,93 +634,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
         </div>
       )}
 
-      {/* TOP-UPS */}
-      {activeTab === 'topups' && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-bold text-white text-base">Payment verification queue</h3>
-            <div className="flex gap-1 text-[11px] bg-black/40 p-0.5 rounded-lg border border-white/10">
-              {(['PENDING', 'APPROVED', 'REJECTED', ''] as const).map(f => (
-                <button
-                  key={f || 'all'}
-                  onClick={() => setTopupFilter(f)}
-                  className={`px-2.5 py-1 rounded-md font-semibold capitalize ${topupFilter === f ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                >
-                  {f || 'all'}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* USERS */}
+      {activeTab === 'users' && <UsersPanel isSuper={isSuper} onToast={onToast} onChanged={() => void store.loadAdmin()} />}
 
-          {!isSuper && (
-            <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/25 rounded-xl px-4 py-2.5 flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5" />
-              Staff accounts can review references, but only the owner account can credit a wallet.
-            </div>
-          )}
+      {/* PAYMENTS */}
+      {activeTab === 'payments' && <PaymentsPanel isSuper={isSuper} onToast={onToast} />}
 
-          {topups.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-500 bg-[#141626] rounded-2xl border border-white/10">
-              Nothing in this queue.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {topups.map(t => (
-                <div key={t.id} className="p-4 rounded-xl bg-[#141626] border border-white/10 flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="text-xs font-bold text-white">@{t.username ?? `user ${t.user_id}`}</span>
-                      <span className="text-[10px] text-slate-500">{t.email}</span>
-                      <span
-                        className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded ${
-                          t.status === 'PENDING'
-                            ? 'bg-amber-500/15 text-amber-300'
-                            : t.status === 'APPROVED'
-                            ? 'bg-emerald-500/15 text-emerald-300'
-                            : 'bg-rose-500/15 text-rose-300'
-                        }`}
-                      >
-                        {t.status}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-300">
-                      {t.amount_credits} credits for {t.amount_fiat} {t.currency} via {t.method}
-                    </p>
-                    <p className="text-[11px] text-slate-400 font-mono mt-1">Ref: {t.reference_id}</p>
-                    {t.sender_info && <p className="text-[11px] text-slate-400">Sender: {t.sender_info}</p>}
-                    <p className="text-[10px] text-slate-500 mt-1">Submitted {new Date(t.created_at).toLocaleString()}</p>
-                  </div>
+      {/* COUPONS */}
+      {activeTab === 'coupons' && <CouponsPanel onToast={onToast} />}
 
-                  {t.status === 'PENDING' ? (
-                    <div className="flex gap-2 shrink-0">
-                      <button
-                        disabled={busy || !isSuper}
-                        onClick={() => void reviewTopup(t, true)}
-                        className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5"
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        Approve
-                      </button>
-                      <button
-                        disabled={busy || !isSuper}
-                        onClick={() => void reviewTopup(t, false)}
-                        className="bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5"
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        Reject
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="text-[10px] text-slate-500">
-                      {t.reviewed_at ? `Reviewed ${new Date(t.reviewed_at).toLocaleString()}` : 'Settled'}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      {/* CATEGORIES */}
+      {activeTab === 'categories' && (
+        <CategoriesPanel
+          onToast={message => {
+            onToast(message);
+            void store.loadCategories().then(rows => setCategories(rows.map(r => ({ id: r.id, name: r.name }))));
+          }}
+        />
       )}
+
+      {/* ACTIVITY LOG */}
+      {activeTab === 'audit' && <AuditPanel isSuper={isSuper} />}
 
       {/* FILES */}
       {activeTab === 'files' && (
@@ -816,29 +786,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
             </button>
           </form>
 
-          <div className="p-6 rounded-2xl bg-[#141626] border border-white/10 space-y-3 max-w-2xl">
-            <h4 className="font-bold text-white text-sm">Catalogue categories</h4>
-            <div className="flex flex-wrap gap-1.5">
-              {categories.map(c => (
-                <span key={c.id} className="text-[11px] px-2.5 py-1 rounded-full bg-black/40 border border-white/10 text-slate-300">
-                  {c.name}
-                </span>
-              ))}
-            </div>
-            <form onSubmit={addCategory} className="flex gap-2">
-              <input
-                type="text"
-                value={newCategory}
-                onChange={e => setNewCategory(e.target.value)}
-                placeholder="New category name"
-                className="flex-1 bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600"
-              />
-              <button type="submit" className="bg-white/10 hover:bg-white/15 text-white font-bold px-4 py-2 rounded-xl text-xs">
-                Add
-              </button>
-            </form>
-          </div>
+          <p className="text-[11px] text-slate-500 max-w-2xl">
+            Catalogue tags have their own{' '}
+            <button onClick={() => setActiveTab('categories')} className="font-bold text-purple-300 hover:underline">
+              Categories
+            </button>{' '}
+            tab, where you can rename, hide, delete or restore them.
+          </p>
         </div>
+      )}
+
+        </main>
+      </div>
+
+      {editing && (
+        <ListingEditModal
+          productId={editing.productId}
+          kind={editing.kind}
+          categories={categories}
+          onClose={() => setEditing(null)}
+          onToast={onToast}
+        />
       )}
 
       {/* VIDEO MODAL */}
@@ -1311,6 +1279,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                       <option key={d.value} value={d.value}>{d.label}</option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">Data size buyers see</label>
+                  <input
+                    type="text"
+                    maxLength={60}
+                    placeholder="e.g. 9 GB"
+                    value={packForm.sizeLabel}
+                    onChange={e => setPackForm({ ...packForm, sizeLabel: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Contents buyers see</label>
+                  <input
+                    type="text"
+                    maxLength={60}
+                    placeholder="e.g. 1100+ videos"
+                    value={packForm.contentsLabel}
+                    onChange={e => setPackForm({ ...packForm, contentsLabel: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                  />
                 </div>
               </div>
 
