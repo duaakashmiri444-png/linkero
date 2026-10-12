@@ -23,6 +23,19 @@ const MOBILE_TABS: { tab: ActiveTab; label: string; Icon: typeof Film }[] = [
   { tab: 'library', label: 'Library', Icon: Bookmark },
 ];
 
+/**
+ * The header has to keep the wallet, bell and avatar on screen, so between the desktop nav appearing at lg
+ * and a 2xl monitor there is no room for the long labels or the typing search box. These read the same as the
+ * phone tab bar's wording so one term always means one section.
+ */
+const DESKTOP_TABS: { tab: ActiveTab; label: string; compact: string }[] = [
+  { tab: 'home', label: 'Home', compact: 'Home' },
+  { tab: 'videos', label: 'Videos', compact: 'Videos' },
+  { tab: 'demo', label: 'Demo Room', compact: 'Demo' },
+  { tab: 'marketplace', label: 'Marketplace', compact: 'Market' },
+  { tab: 'library', label: 'My Library', compact: 'Library' },
+];
+
 interface NavbarProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
@@ -116,42 +129,22 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Zone 2: Clean single-line text navigation links */}
-        <nav className="hidden lg:flex items-center gap-7 text-sm font-semibold text-slate-300">
-          <button
-            onClick={() => setActiveTab('home')}
-            className={`whitespace-nowrap transition-colors hover:text-white py-1 ${activeTab === 'home' ? 'text-white border-b-2 border-purple-500 font-bold' : ''}`}
-          >
-            Home
-          </button>
-          <button
-            onClick={() => setActiveTab('videos')}
-            className={`whitespace-nowrap transition-colors hover:text-white py-1 ${activeTab === 'videos' ? 'text-white border-b-2 border-purple-500 font-bold' : ''}`}
-          >
-            Videos
-          </button>
-          <button
-            onClick={() => setActiveTab('demo')}
-            className={`whitespace-nowrap transition-colors hover:text-white py-1 ${activeTab === 'demo' ? 'text-white border-b-2 border-purple-500 font-bold' : ''}`}
-          >
-            Demo Room
-          </button>
-          <button
-            onClick={() => setActiveTab('marketplace')}
-            className={`whitespace-nowrap transition-colors hover:text-white py-1 ${activeTab === 'marketplace' ? 'text-white border-b-2 border-purple-500 font-bold' : ''}`}
-          >
-            Marketplace
-          </button>
-          <button
-            onClick={() => setActiveTab('library')}
-            className={`whitespace-nowrap transition-colors hover:text-white py-1 flex items-center gap-1.5 ${activeTab === 'library' ? 'text-white border-b-2 border-purple-500 font-bold' : ''}`}
-          >
-            My Library
-            {(user.unlockedVideoIds.length + user.unlockedPackIds.length) > 0 && (
-              <span className="text-[10px] bg-purple-900/60 text-purple-300 font-bold px-1.5 py-0.2 rounded-full border border-purple-500/30">
-                {user.unlockedVideoIds.length + user.unlockedPackIds.length}
-              </span>
-            )}
-          </button>
+        <nav className="hidden lg:flex items-center gap-4 text-sm font-semibold text-slate-300 2xl:gap-7">
+          {DESKTOP_TABS.map(({ tab, label, compact }) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`whitespace-nowrap transition-colors hover:text-white py-1 flex items-center gap-1.5 ${activeTab === tab ? 'text-white border-b-2 border-purple-500 font-bold' : ''}`}
+            >
+              <span className="hidden 2xl:inline">{label}</span>
+              <span className="2xl:hidden">{compact}</span>
+              {tab === 'library' && (user.unlockedVideoIds.length + user.unlockedPackIds.length) > 0 && (
+                <span className="text-[10px] bg-purple-900/60 text-purple-300 font-bold px-1.5 py-0.2 rounded-full border border-purple-500/30">
+                  {user.unlockedVideoIds.length + user.unlockedPackIds.length}
+                </span>
+              )}
+            </button>
+          ))}
           {isAdminRole && (
             <button
               onClick={() => setActiveTab('admin')}
@@ -167,8 +160,8 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           
           {/* Quick Search Input with dropdown suggestions */}
-          <div className="relative hidden sm:block">
-            <div className="flex items-center bg-[#141624] border border-white/10 rounded-xl px-3 py-1.5 focus-within:border-purple-500/60 transition-colors w-40 md:w-48 xl:w-64">
+          <div className="relative hidden sm:block lg:hidden 2xl:block">
+            <div className="flex items-center bg-[#141624] border border-white/10 rounded-xl px-3 py-1.5 focus-within:border-purple-500/60 transition-colors w-40 md:w-48 2xl:w-64">
               <Search className="w-4 h-4 text-slate-400 shrink-0 mr-2" />
               <input
                 type="text"
@@ -227,10 +220,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </div>
 
-          {/* Mobile search trigger */}
+          {/* Search trigger — the only search affordance while the header is tight */}
           <button
             onClick={onOpenSearch}
-            className="sm:hidden p-2.5 text-slate-300 hover:text-white rounded-xl hover:bg-white/5"
+            className="flex p-2.5 text-slate-300 hover:text-white rounded-xl hover:bg-white/5 sm:hidden lg:flex 2xl:hidden"
             aria-label="Open search"
           >
             <Search className="w-6 h-6" />
@@ -244,7 +237,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Coins className="w-5 h-5 text-purple-400 shrink-0" />
             <span className="tabular-nums">{user.walletBalance}</span>
-            <span className="text-xs text-purple-300 font-medium hidden sm:inline">Credits</span>
+            <span className="text-xs text-purple-300 font-medium hidden sm:inline lg:hidden 2xl:inline">Credits</span>
           </button>
 
           {/* In-site Notification Center toggle */}
