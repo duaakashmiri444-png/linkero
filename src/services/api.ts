@@ -66,6 +66,30 @@ export interface AccessState {
   expires_at: string | null;
 }
 
+/** The numbered series a listing belongs to, stamped by the server on every card. */
+export interface CollectionStamp {
+  id: number;
+  slug: string;
+  title: string;
+  /** 0 sells the series part by part; anything else unlocks every published part in one debit. */
+  bundle_price: number;
+  part_number: number | null;
+  part_count: number;
+}
+
+/** A series as the Control Panel sees it: the same listing fields minus this part's number. */
+export type SeriesRow = Pick<CollectionStamp, 'id' | 'slug' | 'title' | 'bundle_price' | 'part_count'> & {
+  description?: string | null;
+  published_part_count?: number;
+};
+
+/** A series with every published part attached, as one screen shows it. */
+export interface SeriesDetail {
+  success: boolean;
+  collection: SeriesRow & { single_price_total: number };
+  parts: ProductRow[];
+}
+
 export interface ProductRow {
   id: number;
   slug: string;
@@ -105,6 +129,10 @@ export interface ProductRow {
   is_streamable?: boolean;
   link_types?: string[];
   categories?: { id: number; name: string; slug: string }[];
+  /** Raw columns the Control Panel edits; the shopper-facing stamp is `collection`. */
+  collection_id?: number | null;
+  part_number?: number | null;
+  collection?: CollectionStamp | null;
   progress_percent?: number;
   created_at?: string;
   updated_at?: string;
@@ -329,6 +357,10 @@ export interface AdminProductPayload {
   premium_resource_url?: string;
   size_label?: string;
   contents_label?: string;
+  /** Typed series name. An empty string takes the listing out of its series again. */
+  collection_name?: string;
+  part_number?: number | null;
+  collection_bundle_price?: number | null;
   tags?: string;
   status?: string;
   rights_confirmed: true;
@@ -561,6 +593,26 @@ export const api = {
     get: () => request<{ success: boolean; library: LibraryPayload; counts: Record<string, number> }>('/api/library'),
   },
 
+  collections: {
+    /** One series, every published part in owner-numbered order, paid addresses already masked. */
+    get: (idOrSlug: number | string) =>
+      request<{ success: boolean; collection: SeriesRow & { single_price_total: number }; parts: ProductRow[] }>(
+        `/api/collections/${idOrSlug}`
+      ),
+    purchase: (idOrSlug: number | string) =>
+      request<{
+        success: boolean;
+        message: string;
+        receipt: {
+          collection_id: number;
+          title: string;
+          price_paid: number;
+          balance_remaining: number;
+          parts_unlocked: Array<{ id: number; title: string; part_number: number | null; expires_at: string | null }>;
+        };
+      }>(`/api/collections/${idOrSlug}/purchase`, { method: 'POST', body: {} }),
+  },
+
   wallet: {
     get: () => request<{ success: boolean; wallet: Wallet; stats: WalletStats }>('/api/wallet'),
     transactions: () => request<{ success: boolean; transactions: TransactionRow[] }>('/api/wallet/transactions'),
@@ -640,10 +692,18 @@ export const api = {
     auditLogs: (params: { q?: string; action?: string; limit?: number } = {}) =>
       request<{ success: boolean; logs: AdminAuditRow[]; actions: string[] }>(`/api/admin/audit-logs${q(params)}`),
     products: () => request<{ success: boolean; products: ProductRow[] }>('/api/admin/products'),
+    /** Every series the owner has started, with how many listings each one holds. */
+    collections: () => request<{ success: boolean; collections: SeriesRow[] }>('/api/admin/collections'),
     product: (id: number) =>
-      request<{ success: boolean; product: ProductRow; lessons: LessonRow[]; media: MediaRow[]; categories: unknown[]; assets: MediaAsset[] }>(
-        `/api/admin/products/${id}`
-      ),
+      request<{
+        success: boolean;
+        product: ProductRow;
+        lessons: LessonRow[];
+        media: MediaRow[];
+        categories: unknown[];
+        assets: MediaAsset[];
+        series: SeriesRow | null;
+      }>(`/api/admin/products/${id}`),
     createProduct: (payload: AdminProductPayload) =>
       request<{ success: boolean; message: string; product_id: number; slug: string; lessons: LessonRow[]; files: MediaRow[] }>(
         '/api/admin/products',

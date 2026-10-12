@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { store } from '../../services/store';
-import type { ProductRow } from '../../services/api';
-import { Field, Select } from './ui';
+import type { ProductRow, SeriesRow } from '../../services/api';
+import { Field, SeriesFields, Select, type SeriesDraft } from './ui';
 
 const VISIBILITY = [
   { value: 'PUBLISHED', label: 'Published' },
@@ -29,21 +29,30 @@ export const ListingEditModal: React.FC<{
   const [tags, setTags] = useState('');
   const [sizeLabel, setSizeLabel] = useState('');
   const [contentsLabel, setContentsLabel] = useState('');
+  const [series, setSeries] = useState<SeriesDraft>({ name: '', part: '', price: '' });
+  const [seriesOptions, setSeriesOptions] = useState<SeriesRow[]>([]);
   const [status, setStatus] = useState('PUBLISHED');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    void store.loadSeriesList().then(setSeriesOptions);
     void store.loadListingDetail(productId).then(detail => {
       if (!detail) return;
-      setRow(detail);
-      setTitle(detail.title);
-      setDescription(detail.description || '');
-      setPrice(String(detail.price ?? 0));
-      setCategory(detail.category || categories[0]?.name || '');
-      setTags(detail.tags || '');
-      setSizeLabel(detail.size_label || '');
-      setContentsLabel(detail.contents_label || '');
-      setStatus(detail.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED');
+      const row = detail.product;
+      setRow(row);
+      setTitle(row.title);
+      setDescription(row.description || '');
+      setPrice(String(row.price ?? 0));
+      setCategory(row.category || categories[0]?.name || '');
+      setTags(row.tags || '');
+      setSizeLabel(row.size_label || '');
+      setContentsLabel(row.contents_label || '');
+      setSeries({
+        name: detail.series?.title ?? '',
+        part: row.part_number ? String(row.part_number) : '',
+        price: detail.series?.bundle_price ? String(detail.series.bundle_price) : '',
+      });
+      setStatus(row.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED');
     });
   }, [productId]);
 
@@ -66,6 +75,11 @@ export const ListingEditModal: React.FC<{
       // A video has no pack headline to advertise, so the fields are left off entirely rather than
       // sent blank — the endpoint keeps whatever it already holds for anything omitted.
       ...(kind === 'pack' ? { size_label: sizeLabel.trim(), contents_label: contentsLabel.trim() } : {}),
+      // Always sent: an empty name is the owner saying "this one stands alone again", and the
+      // endpoint would otherwise keep the series it already has.
+      collection_name: series.name.trim(),
+      part_number: series.name.trim() && series.part.trim() ? Number(series.part) : null,
+      collection_bundle_price: series.name.trim() && series.price.trim() ? Number(series.price) : null,
       status
     });
     setBusy(false);
@@ -127,6 +141,13 @@ export const ListingEditModal: React.FC<{
           onChange={setTags}
           placeholder="4K, Featured"
           hint={`Comma separated. Stored as “${row.tags || 'nothing'}”.`}
+        />
+
+        <SeriesFields
+          listId="edit-series-names"
+          knownNames={seriesOptions.map(s => s.title)}
+          value={series}
+          onChange={setSeries}
         />
 
         {kind === 'pack' && (

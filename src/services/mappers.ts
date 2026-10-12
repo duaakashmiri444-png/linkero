@@ -186,6 +186,7 @@ export function toVideo(p: ProductRow): Video {
     status: p.status,
     access: p.user_access ?? null,
     lessonCount: Number(p.lesson_count ?? 0),
+    series: p.collection ?? null,
     isFeatured: p.icon === 'star' || p.slug.includes('featured'),
     isTrending: Number(p.views ?? 0) > 0,
     isNewRelease: !!p.created_at && Date.now() - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 14,

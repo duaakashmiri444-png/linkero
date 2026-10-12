@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Video, User } from '../types';
 import { store } from '../services/store';
 import { classifySource, destinationLabel, embedFrameUrl, formatDuration } from '../services/mappers';
+import { SeriesPills, SeriesStrip } from './SeriesParts';
+import type { SeriesDetail } from '../services/api';
 import {
   ArrowLeft,
   Bookmark,
@@ -125,6 +127,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [tapHint, setTapHint] = useState<{ text: string; side: 'left' | 'right' } | null>(null);
 
+  const [series, setSeries] = useState<SeriesDetail | null>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -148,6 +152,20 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     setIsLoadingStream(false);
     return result;
   }, [videoId]);
+
+  // A card stamp carries this part's number only; the siblings come from the series endpoint.
+  const seriesSlug = video?.series?.slug ?? null;
+  const refreshSeries = useCallback(async () => {
+    if (!seriesSlug) {
+      setSeries(null);
+      return;
+    }
+    setSeries(await store.loadSeries(seriesSlug));
+  }, [seriesSlug]);
+
+  useEffect(() => {
+    void refreshSeries();
+  }, [refreshSeries]);
 
   useEffect(() => {
     setPreviewExceeded(false);
@@ -220,7 +238,15 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const isUnlocked = !isPreview && stage.kind !== 'NONE';
   const isFavorite = store.isFavorite(video.id);
   const total = duration || video.durationSeconds || 0;
-  const relatedVideos = store.getVideos().filter(v => v.id !== video.id && (v.category === video.category || v.isTrending)).slice(0, 6);
+  const relatedVideos = store
+    .getVideos()
+    .filter(
+      v =>
+        v.id !== video.id &&
+        !(v.series && video.series && v.series.id === video.series.id) &&
+        (v.category === video.category || v.isTrending)
+    )
+    .slice(0, 6);
   const chromeHidden = !chromeVisible && isPlaying && !drawerOpen;
 
   const seekTo = (time: number) => {
@@ -320,6 +346,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     if (result.success) {
       setPreviewExceeded(false);
       onToast(result.message);
+      void refreshSeries();
       const playback = await loadPlayback();
       if (playback.url) {
         window.setTimeout(() => videoRef.current?.play().then(() => setIsPlaying(true)).catch(() => undefined), 300);
@@ -662,6 +689,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               )}
             </div>
             <h1 className="mt-1 truncate font-display text-lg font-bold leading-tight text-white sm:text-2xl">{video.title}</h1>
+            {series && <SeriesPills detail={series} currentId={video.id} onSelectVideo={onSelectVideo} />}
           </div>
           <button
             onClick={() => setDrawerOpen(open => !open)}
@@ -929,6 +957,21 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   </button>
                 </div>
               </div>
+
+              {series && (
+                <SeriesStrip
+                  detail={series}
+                  currentId={video.id}
+                  walletBalance={user.walletBalance}
+                  onSelectVideo={onSelectVideo}
+                  onOpenWallet={onOpenWallet}
+                  onToast={onToast}
+                  onUnlocked={() => {
+                    void refreshSeries();
+                    void loadPlayback();
+                  }}
+                />
+              )}
 
               {relatedVideos.length > 0 && (
                 <div>

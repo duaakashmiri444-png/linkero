@@ -168,7 +168,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           
           {/* Quick Search Input with dropdown suggestions */}
           <div className="relative hidden sm:block">
-            <div className="flex items-center bg-[#141624] border border-white/10 rounded-xl px-3 py-1.5 focus-within:border-purple-500/60 transition-colors w-48 md:w-64">
+            <div className="flex items-center bg-[#141624] border border-white/10 rounded-xl px-3 py-1.5 focus-within:border-purple-500/60 transition-colors w-40 md:w-48 xl:w-64">
               <Search className="w-4 h-4 text-slate-400 shrink-0 mr-2" />
               <input
                 type="text"

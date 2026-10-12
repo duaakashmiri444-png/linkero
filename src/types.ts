@@ -1,4 +1,4 @@
-import type { AccessState, MediaRow, PaymentProvider, TopupRow, TransactionRow } from './services/api';
+import type { AccessState, CollectionStamp, MediaRow, PaymentProvider, TopupRow, TransactionRow } from './services/api';
 
 /**
  * Types mirror what the Desi Ero API actually returns. Anything the backend does not
@@ -39,6 +39,8 @@ export interface Video {
   status: string;
   access: AccessState | null;
   lessonCount: number;
+  /** The numbered series this belongs to, or null when sold on its own. */
+  series: CollectionStamp | null;
   isFavorite?: boolean;
   isFeatured?: boolean;
   isTrending?: boolean;

@@ -11,6 +11,8 @@ import type {
   PaymentProvider,
   PlatformSettingRow,
   ProductRow,
+  SeriesDetail,
+  SeriesRow,
   SessionUser,
   SupportChannelsPublic,
   TopupRow,
@@ -41,6 +43,16 @@ export interface ActionResult {
   success: boolean;
   message: string;
   balance?: number;
+}
+
+/** A file name is a decent first title: no extension, no underscores, nothing absurdly long. */
+function titleFromFile(name: string): string {
+  const cleaned = String(name || '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return (cleaned || String(name || 'Untitled')).slice(0, 90);
 }
 
 function describeError(err: unknown): string {
@@ -356,6 +368,33 @@ class AppStore {
     };
   }
 
+  /** Every published part of a series, in the order the owner numbered them, with this viewer's access on each. */
+  public async loadSeries(idOrSlug: number | string): Promise<SeriesDetail | null> {
+    return this.run('loadSeries', () => api.collections.get(idOrSlug));
+  }
+
+  /**
+   * One debit for a whole series. The server decides which parts still need buying and writes the
+   * purchase rows, so the shopper's library and the owner's ledger stay in step with a per-part buy.
+   */
+  public async unlockSeries(idOrSlug: number | string): Promise<ActionResult> {
+    if (!this.isAuthenticated()) {
+      this.requestLogin();
+      return { success: false, message: 'Sign in to unlock content.' };
+    }
+    const result = await this.run('unlockSeries', () => api.collections.purchase(idOrSlug));
+    if (!result) return this.fail();
+
+    for (const part of result.receipt.parts_unlocked) this.accessCache.delete(part.id);
+    await this.loadPersonal(null);
+    await this.refreshCatalogue();
+    return {
+      success: true,
+      message: result.message || `Unlocked ${result.receipt.parts_unlocked.length} parts for ${result.receipt.price_paid} credits.`,
+      balance: result.receipt.balance_remaining,
+    };
+  }
+
   // --- AUTHORISED ACCESS: the only place premium URLs enter the app ---
   private async loadAccess(productId: number): Promise<ContentAccess | null> {
     const cached = this.accessCache.get(productId);
@@ -551,6 +590,10 @@ class AppStore {
     previewFile?: File | null;
     posterFile?: File | null;
     attachToProductId?: number;
+    /** Series the owner grouped this part into. Empty name means "no series". */
+    seriesName?: string;
+    partNumber?: number | null;
+    seriesPrice?: number | null;
   }): Promise<ActionResult & { productId?: number }> {
     if (!form.title.trim()) return { success: false, message: 'A title is required.' };
 
@@ -588,6 +631,13 @@ class AppStore {
       premium_type: 'VIDEO',
       premium_resource_url: streamUrl ?? undefined,
       rights_confirmed: true,
+      // Only sent when the owner actually named a series: an omitted key leaves the listing's
+      // existing membership untouched, while an empty name is what takes it out of one.
+      ...(form.seriesName !== undefined ? { collection_name: form.seriesName.trim() } : {}),
+      ...(form.seriesName?.trim() ? { part_number: form.partNumber ?? null } : {}),
+      ...(form.seriesName?.trim() && form.seriesPrice !== undefined && form.seriesPrice !== null
+        ? { collection_bundle_price: form.seriesPrice }
+        : {}),
       lessons: streamUrl
         ? [
             {
@@ -609,6 +659,88 @@ class AppStore {
     const productId = result.product_id;
     await this.refreshCatalogue();
     return { success: true, message: `“${payload.title}” is live.`, productId };
+  }
+
+  /**
+   * The bulk adder: every file the owner picks becomes its own listing, one request per file, with
+   * the shared choices (category, price, access window, series) applied to all of them and a title
+   * read off the file name. Files go up one at a time on purpose — a phone gallery can hold a dozen
+   * clips, and firing them all at once would either blow the request limit or leave him guessing
+   * which one failed.
+   */
+  public async publishVideosBulk(form: {
+    videos: { file: File; durationSeconds: number }[];
+    category: string;
+    price: number;
+    status?: string;
+    access_duration_type?: string;
+    description?: string;
+    seriesName?: string;
+    firstPartNumber?: number;
+    seriesPrice?: number | null;
+    onProgress?: (done: number, total: number, current: string) => void;
+  }): Promise<ActionResult & { created?: number[]; failed?: string[] }> {
+    const chosen = form.videos ?? [];
+    if (!chosen.length) return { success: false, message: 'Choose at least one video file to add.' };
+
+    const created: number[] = [];
+    const failed: string[] = [];
+    const seriesName = (form.seriesName ?? '').trim();
+
+    for (let i = 0; i < chosen.length; i++) {
+      const { file, durationSeconds } = chosen[i];
+      const label = titleFromFile(file.name);
+      form.onProgress?.(i, chosen.length, file.name);
+
+      try {
+        const asset = await api.admin.upload(file, 'VIDEO', null);
+        const result = await api.admin.createProduct({
+          title: label,
+          description: (form.description ?? '').trim() || `Added from ${file.name}.`,
+          price: Number(form.price) || 0,
+          category: form.category,
+          status: form.status ?? 'PUBLISHED',
+          access_duration_type: form.access_duration_type ?? 'LIFETIME',
+          premium_type: 'VIDEO',
+          premium_resource_url: asset.url,
+          rights_confirmed: true,
+          ...(seriesName
+            ? {
+                collection_name: seriesName,
+                part_number: Number(form.firstPartNumber) > 0 ? Number(form.firstPartNumber) + i : null,
+                ...(form.seriesPrice !== undefined && form.seriesPrice !== null && form.seriesPrice > 0
+                  ? { collection_bundle_price: form.seriesPrice }
+                  : {}),
+              }
+            : {}),
+          lessons: [
+            {
+              title: label,
+              video_url: asset.url,
+              video_provider: 'UPLOAD',
+              is_free_preview: 0,
+              duration_seconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? Math.floor(durationSeconds) : 600,
+            },
+          ],
+        });
+        created.push(Number(result.product_id));
+      } catch (err) {
+        failed.push(`${file.name}: ${describeError(err)}`);
+      }
+    }
+
+    form.onProgress?.(chosen.length, chosen.length, '');
+    await this.refreshCatalogue();
+    await this.loadAdmin();
+
+    if (!created.length) return { success: false, message: `Nothing was added. ${failed[0] ?? ''}`.trim() };
+    const tail = failed.length ? ` ${failed.length} file(s) failed: ${failed.join(' · ')}` : '';
+    return {
+      success: true,
+      message: `${created.length} video(s) added${seriesName ? ` to "${seriesName}"` : ''}.${tail}`,
+      created,
+      failed,
+    };
   }
 
   /**
@@ -882,9 +1014,16 @@ class AppStore {
   }
 
   /** The stored row behind a listing, so the edit form starts from the database, not the card. */
-  public async loadListingDetail(productId: number): Promise<ProductRow | null> {
+  public async loadListingDetail(productId: number): Promise<{ product: ProductRow; series: SeriesRow | null } | null> {
     const result = await this.run('loadListingDetail', () => api.admin.product(productId));
-    return result?.product ?? null;
+    if (!result) return null;
+    return { product: result.product, series: result.series ?? null };
+  }
+
+  /** The series names the owner has already used, so a new part is typed against a real list. */
+  public async loadSeriesList(): Promise<SeriesRow[]> {
+    const result = await this.run('loadSeriesList', () => api.admin.collections());
+    return result?.collections ?? [];
   }
 
   /** Edits a published listing's own words and price without touching its media. */

@@ -58,12 +58,14 @@ export const Field: React.FC<{
   type?: string;
   placeholder?: string;
   hint?: string;
-}> = ({ label, value, onChange, type = 'text', placeholder, hint }) => (
+  list?: string;
+}> = ({ label, value, onChange, type = 'text', placeholder, hint, list }) => (
   <label className="block">
     <span className="block text-[11px] font-semibold text-slate-400 mb-1">{label}</span>
     <input
       type={type}
       value={value}
+      list={list}
       placeholder={placeholder}
       onChange={e => onChange(e.target.value)}
       className="w-full bg-[#0f1120] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:border-purple-500/60 focus:outline-none"
@@ -157,6 +159,66 @@ export function dateTime(iso?: string | null): string {
 }
 
 /** "3h ago" reads better in an activity feed than a full timestamp. */
+/**
+ * The three boxes that put a listing into a numbered series: the name the owner types, the part
+ * number, and the one price that unlocks every part. Reused by the single-video form, the bulk adder
+ * and the listing editor so a series reads the same wherever it is set.
+ */
+export interface SeriesDraft {
+  name: string;
+  part: string;
+  price: string;
+}
+
+export const SeriesFields: React.FC<{
+  value: SeriesDraft;
+  onChange: (next: SeriesDraft) => void;
+  /** Names already in use, offered as typing suggestions so a series is not duplicated by a typo. */
+  knownNames: string[];
+  listId: string;
+  partLabel?: string;
+}> = ({ value, onChange, knownNames, listId, partLabel = 'Part number' }) => (
+  <div className="space-y-2">
+    <Field
+      label="Series name (optional)"
+      value={value.name}
+      onChange={name => onChange({ ...value, name })}
+      list={listId}
+      placeholder="e.g. Lahore Sessions"
+      hint={
+        value.name.trim()
+          ? 'Videos sharing this name are shown as one numbered collection.'
+          : 'Leave empty and this listing stands alone.'
+      }
+    />
+    <datalist id={listId}>
+      {knownNames.map(name => (
+        <option key={name} value={name} />
+      ))}
+    </datalist>
+    {value.name.trim() && (
+      <div className="grid grid-cols-2 gap-3">
+        <Field
+          label={partLabel}
+          type="number"
+          value={value.part}
+          onChange={part => onChange({ ...value, part })}
+          placeholder="1"
+          hint="Shown to buyers as “Part 2 of 4”."
+        />
+        <Field
+          label="All parts for (credits)"
+          type="number"
+          value={value.price}
+          onChange={price => onChange({ ...value, price })}
+          placeholder="blank = per part"
+          hint="Blank sells each part at its own price."
+        />
+      </div>
+    )}
+  </div>
+);
+
 export function timeAgo(iso?: string | null): string {
   if (!iso) return 'never';
   const stamp = Date.parse(iso);

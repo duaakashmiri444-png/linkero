@@ -1,7 +1,7 @@
 import React from 'react';
 import { Video } from '../types';
 import { store } from '../services/store';
-import { Play, Bookmark, Clock, CheckCircle } from 'lucide-react';
+import { Play, Bookmark, Clock, CheckCircle, Layers } from 'lucide-react';
 
 interface VideoCardProps {
   video: Video;
@@ -64,6 +64,16 @@ export const VideoCard: React.FC<VideoCardProps> = ({
 
         </div>
 
+        {/* Numbered series marker, so a shopper can see a card belongs to a run before opening it */}
+        {video.series && (
+          <div className="absolute bottom-2.5 left-2.5 z-10 flex items-center gap-1 rounded-md bg-black/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-purple-200 backdrop-blur-md">
+            <Layers className="w-2.5 h-2.5" />
+            <span className="tabular-nums">
+              {video.series.part_number ? `Part ${video.series.part_number}/${video.series.part_count}` : video.series.title}
+            </span>
+          </div>
+        )}
+
         {/* Duration badge — hidden when the seller never recorded a length */}
         {video.duration && (
           <div className="absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 bg-black/80 backdrop-blur-md text-white text-[10px] font-semibold px-2 py-0.5 rounded-md tabular-nums">
@@ -105,6 +115,12 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         <h3 className="font-semibold text-sm text-white line-clamp-1 group-hover:text-purple-300 transition-colors">
           {video.title}
         </h3>
+        {video.series?.part_number && (
+          <div className="flex items-center gap-1 text-[11px] text-purple-300/70">
+            <Layers className="w-3 h-3 shrink-0" />
+            <span className="truncate">{video.series.title}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2 text-[11px] text-slate-500">
           <span className="text-purple-300/80 font-semibold">{video.category}</span>
           {video.ratingCount > 0 && <span aria-hidden="true">·</span>}

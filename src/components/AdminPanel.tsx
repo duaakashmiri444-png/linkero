@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { store } from '../services/store';
 import { DELIVERY_PLATFORMS, formatDuration, humanBytes } from '../services/mappers';
-import type { AdminAuditRow, AdminOverview, MediaAsset, PlatformSettingRow } from '../services/api';
+import type { AdminAuditRow, AdminOverview, MediaAsset, PlatformSettingRow, SeriesRow } from '../services/api';
 import type { DigitalPack, Video } from '../types';
 import { AuditPanel } from './admin/AuditPanel';
 import { CategoriesPanel } from './admin/CategoriesPanel';
@@ -32,6 +32,7 @@ import {
   UserRound,
   Image as PhotoIcon
 } from 'lucide-react';
+import { SeriesFields } from './admin/ui';
 
 interface AdminPanelProps {
   onToast: (msg: string) => void;
@@ -92,7 +93,22 @@ const EMPTY_VIDEO_FORM = {
   price: 4,
   status: 'PUBLISHED',
   access_duration_type: 'LIFETIME',
-  tags: ''
+  tags: '',
+  /** Typed, never picked from a list the owner did not write — a series is his naming. */
+  seriesName: '',
+  partNumber: '',
+  seriesPrice: ''
+};
+
+const EMPTY_BULK_FORM = {
+  category: '',
+  price: 4,
+  status: 'PUBLISHED',
+  access_duration_type: 'LIFETIME',
+  description: '',
+  seriesName: '',
+  firstPartNumber: '1',
+  seriesPrice: ''
 };
 
 const EMPTY_PACK_FORM = {
@@ -139,6 +155,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
   const [packDemoDuration, setPackDemoDuration] = useState(0);
   const [packLinks, setPackLinks] = useState<{ provider: string; url: string }[]>([]);
 
+  // Bulk adding: the owner picks a whole set of clips from his gallery in one go.
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkForm, setBulkForm] = useState(EMPTY_BULK_FORM);
+  const [bulkVideos, setBulkVideos] = useState<{ file: File; durationSeconds: number }[]>([]);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current: string } | null>(null);
+  const [seriesOptions, setSeriesOptions] = useState<SeriesRow[]>([]);
+
   const [previewTarget, setPreviewTarget] = useState<{ productId: number; title: string; hasPreview: boolean } | null>(null);
   const [previewMode, setPreviewMode] = useState<'trim' | 'upload' | 'none'>('trim');
   const [previewSeconds, setPreviewSeconds] = useState('');
@@ -155,8 +178,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
   const packVideoInputRef = useRef<HTMLInputElement>(null);
   const packPhotoInputRef = useRef<HTMLInputElement>(null);
   const packDemoInputRef = useRef<HTMLInputElement>(null);
+  const bulkInputRef = useRef<HTMLInputElement>(null);
   const libraryUploadRef = useRef<HTMLInputElement>(null);
   const previewClipInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // The series names offered while typing are the ones already in use, so a second clip joining
+    // "Lahore Sessions" is not written as "lahore sessions" and filed under a different collection.
+    if (!showVideoModal && !showBulkModal) return;
+    void store.loadSeriesList().then(setSeriesOptions);
+  }, [showVideoModal, showBulkModal]);
 
   const isSuper = store.isSuperAdmin();
 
@@ -229,7 +260,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
       videoFile,
       videoDurationSeconds: videoDuration,
       previewFile,
-      posterFile
+      posterFile,
+      seriesName: videoForm.seriesName,
+      partNumber: videoForm.partNumber.trim() ? Number(videoForm.partNumber) : null,
+      seriesPrice: videoForm.seriesPrice.trim() ? Number(videoForm.seriesPrice) : null
     });
     setBusy(false);
     onToast(result.message);
@@ -278,6 +312,47 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
     setBusy(false);
     onToast(result.message);
     if (result.success) resetPackModal();
+  };
+
+  // --- BULK VIDEO AUTHORING ---
+  const resetBulkModal = () => {
+    setShowBulkModal(false);
+    setBulkForm(EMPTY_BULK_FORM);
+    setBulkVideos([]);
+    setBulkProgress(null);
+  };
+
+  /** Opening an authoring form pulls the series names already in use, so a new part is typed against an existing one. */
+  const openBulkModal = () => setShowBulkModal(true);
+
+  const addBulkFiles = async (files: File[]) => {
+    const clips = files.filter(f => f.type.startsWith('video/') || /\.(mp4|m4v|webm|mov|mkv)$/i.test(f.name));
+    if (!clips.length) return;
+    const probed = await Promise.all(
+      clips.map(async file => ({ file, durationSeconds: await probeVideoDuration(file) }))
+    );
+    setBulkVideos(prev => [...prev, ...probed]);
+  };
+
+  const submitBulk = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    const result = await store.publishVideosBulk({
+      videos: bulkVideos,
+      category: bulkForm.category || categories[0]?.name || 'Videos',
+      price: Number(bulkForm.price) || 0,
+      status: bulkForm.status,
+      access_duration_type: bulkForm.access_duration_type,
+      description: bulkForm.description,
+      seriesName: bulkForm.seriesName,
+      firstPartNumber: Number(bulkForm.firstPartNumber) || 1,
+      seriesPrice: bulkForm.seriesPrice.trim() ? Number(bulkForm.seriesPrice) : null,
+      onProgress: (done, total, current) => setBulkProgress({ done, total, current }),
+    });
+    setBusy(false);
+    setBulkProgress(null);
+    onToast(result.message);
+    if (result.success) resetBulkModal();
   };
 
   const editPrice = async (itemId: string, current: number, title: string) => {
@@ -450,13 +525,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
         <div className="space-y-4">
           <div className="flex justify-between items-center gap-3 flex-wrap">
             <h3 className="font-bold text-white text-base">Streamable catalogue ({videos.length})</h3>
-            <button
-              onClick={() => setShowVideoModal(true)}
-              className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add video
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={openBulkModal}
+                className="bg-white/10 hover:bg-white/15 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5"
+              >
+                <UploadCloud className="w-3.5 h-3.5" />
+                Add many from gallery
+              </button>
+              <button
+                onClick={() => setShowVideoModal(true)}
+                className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add video
+              </button>
+            </div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-[#121422] overflow-hidden">
@@ -901,6 +985,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                 />
               </div>
 
+              <SeriesFields
+                listId="video-series-names"
+                knownNames={seriesOptions.map(s => s.title)}
+                value={{ name: videoForm.seriesName, part: videoForm.partNumber, price: videoForm.seriesPrice }}
+                onChange={next =>
+                  setVideoForm({ ...videoForm, seriesName: next.name, partNumber: next.part, seriesPrice: next.price })
+                }
+              />
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-400 mb-1">Category</label>
@@ -977,6 +1070,180 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onToast }) => {
                   className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-2 rounded-xl"
                 >
                   {busy ? 'Uploading & publishing…' : 'Upload & publish'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* BULK VIDEO MODAL */}
+      {showBulkModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#121424] border border-white/15 rounded-3xl p-6 w-full max-w-xl space-y-4 my-auto">
+            <div>
+              <h3 className="font-bold text-white text-base">Add many videos at once</h3>
+              <p className="text-[11px] text-slate-500">
+                Pick the clips from your gallery. Each one becomes its own listing with its own cover and runtime.
+              </p>
+            </div>
+
+            <form onSubmit={submitBulk} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-400 mb-1">Videos from your device *</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => bulkInputRef.current?.click()}
+                    className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-3 py-2 rounded-xl flex items-center gap-1.5"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    Choose videos
+                  </button>
+                  <span className="text-slate-400">
+                    {bulkVideos.length
+                      ? `${bulkVideos.length} selected · ${humanBytes(bulkVideos.reduce((sum, v) => sum + v.file.size, 0))}`
+                      : 'select as many as you want'}
+                  </span>
+                </div>
+                <input
+                  ref={bulkInputRef}
+                  type="file"
+                  accept="video/*"
+                  multiple
+                  className="hidden"
+                  onChange={async e => {
+                    const chosen = Array.from(e.target.files ?? []);
+                    e.target.value = '';
+                    await addBulkFiles(chosen);
+                  }}
+                />
+                {bulkVideos.length > 0 && (
+                  <ul className="mt-2 max-h-40 overflow-y-auto space-y-1 pr-1">
+                    {bulkVideos.map((v, i) => (
+                      <li key={`${v.file.name}-${i}`} className="flex items-center justify-between gap-2 bg-black/30 border border-white/10 rounded-xl px-2.5 py-1.5">
+                        <span className="truncate text-slate-200">
+                          <span className="text-slate-500 font-mono mr-1.5">{i + 1}.</span>
+                          {v.file.name.replace(/\.[^.]+$/, '')}
+                        </span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span className="text-slate-500 font-mono">{v.durationSeconds ? formatDuration(v.durationSeconds) : humanBytes(v.file.size)}</span>
+                          <button
+                            type="button"
+                            aria-label={`Remove ${v.file.name}`}
+                            onClick={() => setBulkVideos(prev => prev.filter((_, idx) => idx !== i))}
+                            className="text-slate-500 hover:text-rose-400"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                          </button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">Category for all</label>
+                  <select
+                    value={bulkForm.category || categories[0]?.name || ''}
+                    onChange={e => setBulkForm({ ...bulkForm, category: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                  >
+                    {categories.map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Access window</label>
+                  <select
+                    value={bulkForm.access_duration_type}
+                    onChange={e => setBulkForm({ ...bulkForm, access_duration_type: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                  >
+                    {DURATIONS.map(d => (
+                      <option key={d.value} value={d.value}>{d.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">Price each (credits)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={bulkForm.price}
+                    onChange={e => setBulkForm({ ...bulkForm, price: Number(e.target.value) })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Visibility</label>
+                  <select
+                    value={bulkForm.status}
+                    onChange={e => setBulkForm({ ...bulkForm, status: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                  >
+                    <option value="PUBLISHED">Published</option>
+                    <option value="DRAFT">Draft (hidden)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">Description for all (optional)</label>
+                <textarea
+                  rows={2}
+                  value={bulkForm.description}
+                  onChange={e => setBulkForm({ ...bulkForm, description: e.target.value })}
+                  placeholder="Left blank, each listing says which file it came from."
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-white"
+                />
+              </div>
+
+              <SeriesFields
+                listId="bulk-series-names"
+                knownNames={seriesOptions.map(s => s.title)}
+                partLabel="Part number of the first"
+                value={{ name: bulkForm.seriesName, part: bulkForm.firstPartNumber, price: bulkForm.seriesPrice }}
+                onChange={next =>
+                  setBulkForm({ ...bulkForm, seriesName: next.name, firstPartNumber: next.part, seriesPrice: next.price })
+                }
+              />
+
+              {bulkProgress && (
+                <div className="rounded-xl border border-purple-500/30 bg-purple-500/10 px-3 py-2">
+                  <p className="text-purple-200 font-bold">
+                    Adding {Math.min(bulkProgress.done + 1, bulkProgress.total)} of {bulkProgress.total}
+                    {bulkProgress.current ? ` — ${bulkProgress.current}` : ''}
+                  </p>
+                  <div className="mt-1.5 h-1 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full bg-purple-500 transition-all"
+                      style={{ width: `${Math.round((bulkProgress.done / Math.max(1, bulkProgress.total)) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={resetBulkModal}
+                  className="px-4 py-2 rounded-xl border border-white/10 text-xs font-bold text-slate-300 hover:text-white hover:bg-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy || !bulkVideos.length}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white text-xs font-bold"
+                >
+                  {busy ? 'Uploading…' : `Add ${bulkVideos.length || ''} video${bulkVideos.length === 1 ? '' : 's'}`}
                 </button>
               </div>
             </form>
